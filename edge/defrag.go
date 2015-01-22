@@ -110,19 +110,40 @@ func (e *EdgeCtl) BucketStartDefrag(b *bucket.Bucket) (err error) {
 func (e *EdgeCtl) BucketDefrag(b *bucket.Bucket) (err error) {
 	for group_id, sg := range b.Group {
 		e.AddressDefragMap = make(map[elliptics.RawAddr]int)
+		e.DefragStates = make(map[elliptics.AddressBackend]AbState)
 
 		for ab, sb := range sg.Ab {
 			free_space_rate := bucket.FreeSpaceRatio(sb, 0)
 			removed_space_rate := float64(sb.VFS.BackendRemovedSize) / float64(sb.VFS.TotalSizeLimit)
+
+			if sb.DefragState == elliptics.DefragStateInProgress {
+				log.Printf("bucket: %s, group: %d, %s: defragmentation is in progress",
+					b.Name, group_id, ab.String())
+				continue
+			}
+
+			if e.Timeback != 0 && sb.DefragCompletionStatus == 0 {
+				d := time.Duration(e.Timeback) * time.Second
+				start_gap := time.Now().Add(-d)
+
+				if sb.DefragCompletionTime.After(start_gap) {
+					log.Printf("bucket: %s, group: %d, %s: defragmentation completed recently: %s, within last %d seconds\n",
+						b.Name, group_id, ab.String(), sb.DefragCompletionTime.String(), e.Timeback)
+					continue
+				}
+			}
+
 			log.Printf("bucket: %s, group: %d, %s: starting defragmentation, used: %d, removed: %d, total: %d, free-space-rate: %f, removed-space-rate: %f",
 				b.Name, group_id, ab.String(),
 				sb.VFS.BackendUsedSize, sb.VFS.BackendRemovedSize, sb.VFS.TotalSizeLimit,
 				free_space_rate, removed_space_rate)
 
-			e.DefragStates[ab] = AbState {
-						DefragState: elliptics.DefragStateNotStarted,
-					    }
+			// number of defrags per address will be correctly set in BucketStatusParse()
+			// we have to put address itself here, iteration over this map will request remote stats
 			e.AddressDefragMap[ab.Addr] = 0
+			e.DefragStates[ab] = AbState {
+						DefragState: sb.DefragState,
+					    }
 		}
 
 		for {
