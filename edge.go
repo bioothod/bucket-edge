@@ -11,6 +11,8 @@ func main() {
 	config_file := flag.String("config", "", "Transport config file")
 	defrag_count := flag.Int("dcount", edge.DefragBackendsPerServerDefault,
 		"Maximum number of defragmentation processes running in parallel in the bucket")
+	tm := flag.Int("timeback", 0,
+		"The gap in seconds back from current time. If backend defragmentation was completed within this gap, do not run it again")
 	flag.Parse()
 
 	if *bucket == "" {
@@ -21,7 +23,10 @@ func main() {
 		log.Fatal("You must specify config file")
 	}
 
-	e := edge.EdgeInit(*config_file, *defrag_count)
+	e := edge.EdgeInit(*config_file)
+
+	e.Timeback = *tm
+	e.DefragCount = *defrag_count
 
 	err := e.BucketCheck(*bucket)
 	if err != nil {

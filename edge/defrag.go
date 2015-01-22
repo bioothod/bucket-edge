@@ -9,9 +9,6 @@ import (
 )
 
 const (
-	DefragStateNotRunning uint32 = 0
-	DefragStateStarted uint32 = 1
-
 	DefragBackendsPerServerDefault int = 3
 )
 
@@ -32,19 +29,19 @@ func (e *EdgeCtl) BucketStatusParse(b *bucket.Bucket, addr *elliptics.RawAddr, c
 				Backend: backend_status.Backend,
 			}
 
-			if backend_status.DefragState == DefragStateStarted {
+			if backend_status.DefragState == elliptics.DefragStateInProgress {
 				defrag_backends = append(defrag_backends, backend_status.Backend)
 
-				e.defrag_states[ab] = AbState{
-					DefragState: DefragStateStarted,
+				e.DefragStates[ab] = AbState{
+					DefragState: elliptics.DefragStateInProgress,
 				}
 			}
 
-			if backend_status.DefragState == DefragStateNotRunning {
-				prev_state, ok := e.defrag_states[ab]
+			if backend_status.DefragState == elliptics.DefragStateNotStarted {
+				prev_state, ok := e.DefragStates[ab]
 				if ok {
-					if prev_state.DefragState == DefragStateStarted {
-						delete(e.defrag_states, ab)
+					if prev_state.DefragState == elliptics.DefragStateInProgress {
+						delete(e.DefragStates, ab)
 					}
 				}
 			}
@@ -60,14 +57,14 @@ func (e *EdgeCtl) BucketStatusParse(b *bucket.Bucket, addr *elliptics.RawAddr, c
 }
 
 func (e *EdgeCtl) BucketStatus(b *bucket.Bucket) (error) {
-	for addr, _ := range e.address_defrag_map {
-		ch := e.session.BackendsStatus(addr.DnetAddr())
+	for addr, _ := range e.AddressDefragMap {
+		ch := e.Session.BackendsStatus(addr.DnetAddr())
 		defrag_count, err := e.BucketStatusParse(b, &addr, ch)
 		if err != nil {
 			log.Printf("bucket-status: bucket: %s: addr: %s: stat error: %v\n", b.Name, addr.String(), err)
 		}
 
-		e.address_defrag_map[addr] = defrag_count
+		e.AddressDefragMap[addr] = defrag_count
 	}
 
 	return nil
@@ -79,32 +76,32 @@ func (e *EdgeCtl) BucketStartDefrag(b *bucket.Bucket) (err error) {
 		return fmt.Errorf("bucket-start-defrag: bucket: %s, status error: %v", b.Name, err)
 	}
 
-	for ab, state := range e.defrag_states {
-		if state.DefragState == DefragStateStarted {
+	for ab, state := range e.DefragStates {
+		if state.DefragState == elliptics.DefragStateInProgress {
 			continue
 		}
 
-		defrag_count, ok := e.address_defrag_map[ab.Addr]
+		defrag_count, ok := e.AddressDefragMap[ab.Addr]
 		if !ok {
 			log.Printf("bucket-start-defrag: bucket: %s, %s: there is no status, not starting defrag",
 				b.Name, ab.String())
 			continue
 		}
 
-		if defrag_count >= e.defrag_count {
+		if defrag_count >= e.DefragCount {
 			//log.Printf("bucket-start-defrag: bucket: %s, %s: defrag_count: %d, max: %d: not starting defrag\n",
 			//	b.Name, ab.String(), defrag_count, e.defrag_count)
 			continue
 		}
 
 		log.Printf("bucket-start-defrag: bucket: %s, %s: starting defrag\n", b.Name, ab.String())
-		ch := e.session.BackendStartDefrag(ab.Addr.DnetAddr(), ab.Backend)
+		ch := e.Session.BackendStartDefrag(ab.Addr.DnetAddr(), ab.Backend)
 		defrag_started, err := e.BucketStatusParse(b, &ab.Addr, ch)
 		if err != nil {
 			log.Printf("bucket-start-defrag: bucket: %s: %s: reply status error: %v\n", b.Name, ab.String(), err)
 		}
 
-		e.address_defrag_map[ab.Addr] = defrag_count + defrag_started
+		e.AddressDefragMap[ab.Addr] = defrag_count + defrag_started
 	}
 
 	return
@@ -112,7 +109,7 @@ func (e *EdgeCtl) BucketStartDefrag(b *bucket.Bucket) (err error) {
 
 func (e *EdgeCtl) BucketDefrag(b *bucket.Bucket) (err error) {
 	for group_id, sg := range b.Group {
-		e.address_defrag_map = make(map[elliptics.RawAddr]int)
+		e.AddressDefragMap = make(map[elliptics.RawAddr]int)
 
 		for ab, sb := range sg.Ab {
 			free_space_rate := bucket.FreeSpaceRatio(sb, 0)
@@ -122,16 +119,16 @@ func (e *EdgeCtl) BucketDefrag(b *bucket.Bucket) (err error) {
 				sb.VFS.BackendUsedSize, sb.VFS.BackendRemovedSize, sb.VFS.TotalSizeLimit,
 				free_space_rate, removed_space_rate)
 
-			e.defrag_states[ab] = AbState {
-						DefragState: DefragStateNotRunning,
+			e.DefragStates[ab] = AbState {
+						DefragState: elliptics.DefragStateNotStarted,
 					    }
-			e.address_defrag_map[ab.Addr] = 0
+			e.AddressDefragMap[ab.Addr] = 0
 		}
 
 		for {
 			e.BucketStartDefrag(b)
 
-			if len(e.defrag_states) == 0 {
+			if len(e.DefragStates) == 0 {
 				break
 			}
 
