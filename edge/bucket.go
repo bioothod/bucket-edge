@@ -20,9 +20,11 @@ type EdgeCtl struct {
 
 	address_defrag_map map[elliptics.RawAddr]int
 	defrag_states map[elliptics.AddressBackend]AbState
+
+	defrag_count int
 }
 
-func EdgeInit(config_file string) (e *EdgeCtl) {
+func EdgeInit(config_file string, defrag_count int) (e *EdgeCtl) {
 	conf := &config.ProxyConfig {}
 	err := conf.Load(config_file)
 	if err != nil {
@@ -32,6 +34,7 @@ func EdgeInit(config_file string) (e *EdgeCtl) {
 	e = &EdgeCtl {
 		address_defrag_map: make(map[elliptics.RawAddr]int),
 		defrag_states: make(map[elliptics.AddressBackend]AbState),
+		defrag_count: defrag_count,
 	}
 
 	e.ell, err = etransport.NewEllipticsTransport(conf)

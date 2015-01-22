@@ -12,7 +12,7 @@ const (
 	DefragStateNotRunning uint32 = 0
 	DefragStateStarted uint32 = 1
 
-	DefragBackendsPerServer int = 3
+	DefragBackendsPerServerDefault int = 3
 )
 
 func (e *EdgeCtl) BucketStatusParse(b *bucket.Bucket, addr *elliptics.RawAddr, ch <-chan *elliptics.DnetBackendsStatus) (int, error) {
@@ -91,9 +91,9 @@ func (e *EdgeCtl) BucketStartDefrag(b *bucket.Bucket) (err error) {
 			continue
 		}
 
-		if defrag_count >= DefragBackendsPerServer {
+		if defrag_count >= e.defrag_count {
 			//log.Printf("bucket-start-defrag: bucket: %s, %s: defrag_count: %d, max: %d: not starting defrag\n",
-			//	b.Name, ab.String(), defrag_count, DefragBackendsPerServer)
+			//	b.Name, ab.String(), defrag_count, e.defrag_count)
 			continue
 		}
 
