@@ -116,6 +116,13 @@ func (e *EdgeCtl) BucketDefrag(b *bucket.Bucket) (err error) {
 			free_space_rate := bucket.FreeSpaceRatio(sb, 0)
 			removed_space_rate := float64(sb.VFS.BackendRemovedSize) / float64(sb.VFS.TotalSizeLimit)
 
+			// number of defrags per address will be correctly set in BucketStatusParse()
+			// we have to put address itself here, iteration over this map will request remote stats
+			e.AddressDefragMap[ab.Addr] = 0
+			e.DefragStates[ab] = AbState {
+						DefragState: sb.DefragState,
+					    }
+
 			if sb.DefragState == elliptics.DefragStateInProgress {
 				log.Printf("bucket: %s, group: %d, %s: defragmentation is in progress",
 					b.Name, group_id, ab.String())
@@ -137,13 +144,6 @@ func (e *EdgeCtl) BucketDefrag(b *bucket.Bucket) (err error) {
 				b.Name, group_id, ab.String(),
 				sb.VFS.BackendUsedSize, sb.VFS.BackendRemovedSize, sb.VFS.TotalSizeLimit,
 				free_space_rate, removed_space_rate)
-
-			// number of defrags per address will be correctly set in BucketStatusParse()
-			// we have to put address itself here, iteration over this map will request remote stats
-			e.AddressDefragMap[ab.Addr] = 0
-			e.DefragStates[ab] = AbState {
-						DefragState: sb.DefragState,
-					    }
 		}
 
 		for {
