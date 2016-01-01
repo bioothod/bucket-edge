@@ -28,7 +28,6 @@ func (a DnetIteratorResponseByKey) Less(i, j int) bool {
 	return (&a[i].Key).Less(&a[j].Key)
 }
 
-
 func KeyLess(r1, r2 *elliptics.DnetIteratorResponse) bool {
 	return (&r1.Key).Less(&r2.Key)
 }
@@ -573,8 +572,7 @@ func (ctl *IteratorCtl) StartRecovery() (err error) {
 		}
 	}
 
-	log.Printf("start-recovery: %s, index: %d, keys: %d: starting recovery\n",
-					ctl.ab.String(), ctl.index, len(ctl.rkeys))
+	log.Printf("start-recovery: %s, index: %d, keys: %d: starting recovery\n", ctl.ab.String(), ctl.index, len(ctl.rkeys))
 
 	ctl.rkeys = ctl.rkeys[0:0]
 
@@ -822,6 +820,14 @@ func (e *EdgeCtl) Merge(gis []*GroupIteratorCtl) (err error) {
 				min_idx = idx
 				continue
 			}
+
+			if KeyEqual(mg, min) {
+				// select this new key as @min if its timestamp is newer than current @min
+				if mg.Timestamp.After(min.Timestamp) {
+					min = mg
+					min_idx = idx
+				}
+			}
 		}
 
 		if min == nil {
@@ -840,8 +846,12 @@ func (e *EdgeCtl) Merge(gis []*GroupIteratorCtl) (err error) {
 
 			if mg != nil {
 				if KeyEqual(min, mg) {
-					merge_groups[idx] = nil
-					continue
+					// skip recovering key into @mg group *only* if its timestamp
+					// equals to the @min timestamp (the newest key)
+					if min.Timestamp == mg.Timestamp {
+						merge_groups[idx] = nil
+						continue
+					}
 				}
 			}
 
