@@ -426,8 +426,15 @@ func (ctl *IteratorCtl) FixupReadWrite(dest *destination) (err error) {
 		// set no-checksum flag if this key could not be recovered because of failed checksum
 		if fail.Status == -int(syscall.EILSEQ) {
 			src.SetIOflags(elliptics.DNET_IO_FLAGS_NOCSUM)
+
+			// if there is a checksum problem and key looks valid (it has been checked in @key_is_dead() function),
+			// we overwrite key in source group too to generate new correct checksum
+			all_groups := src.GetGroups()
+			all_groups = append(all_groups, ctl.gi.group_id)
+			dst.SetGroups(all_groups)
 		} else {
 			src.SetIOflags(0)
+			dst.SetGroups(dest.groups)
 		}
 
 		if idx != 0 {
