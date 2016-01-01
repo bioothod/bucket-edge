@@ -307,13 +307,16 @@ type destination struct {
 	ssend		<-chan elliptics.IteratorResult
 
 	failed		[]elliptics.DnetIteratorResponse
+
+	really_failed	[]elliptics.DnetIteratorResponse
 }
 
 func NewDestination (groups []uint32) (*destination, error) {
 	return &destination {
-		keys:	make([]elliptics.DnetRawID, 0),
-		groups:	groups,
-		failed:	make([]elliptics.DnetIteratorResponse, 0),
+		keys:		make([]elliptics.DnetRawID, 0),
+		groups:		groups,
+		failed:		make([]elliptics.DnetIteratorResponse, 0),
+		really_failed:	make([]elliptics.DnetIteratorResponse, 0),
 	}, nil
 }
 func (d *destination) Free() {
@@ -417,63 +420,80 @@ func (ctl *IteratorCtl) FixupReadWrite(dest *destination) (err error) {
 
 	key, err := elliptics.NewKey()
 	if err != nil {
-		return fmt.Errorf("could not create remove key: %v", err)
+		return fmt.Errorf("fixup-read-write: could not create key: %v", err)
 	}
 	defer key.Free()
 
-	key.SetRawId(dest.failed[0].Key.ID)
-
-	rs, err := elliptics.NewReadSeekerKey(src, key)
+	rs, err := elliptics.NewEmptyReadSeeker()
 	if err != nil {
 		return err
 	}
 	defer rs.Free()
 
-	dst.SetTimestamp(rs.Mtime)
-
-	ws, err := elliptics.NewWriteSeekerKey(dst, key, 0, rs.TotalSize, rs.TotalSize)
+	ws, err := elliptics.NewEmptyWriteSeeker()
 	if err != nil {
 		return err
 	}
 	defer ws.Free()
 
 	for idx, fail := range(dest.failed) {
+		src.SetIOflags(0)
+		dst.SetGroups(dest.groups)
+
 		// set no-checksum flag if this key could not be recovered because of failed checksum
 		if fail.Status == -int(syscall.EILSEQ) {
 			src.SetIOflags(elliptics.DNET_IO_FLAGS_NOCSUM)
 
 			// if there is a checksum problem and key looks valid (it has been checked in @key_is_dead() function),
 			// we overwrite key in source group too to generate new correct checksum
-			all_groups := src.GetGroups()
+			all_groups := dst.GetGroups()
 			all_groups = append(all_groups, ctl.gi.group_id)
 			dst.SetGroups(all_groups)
-		} else {
-			src.SetIOflags(0)
-			dst.SetGroups(dest.groups)
 		}
 
-		if idx != 0 {
-			key.SetRawId(fail.Key.ID)
+		key.SetRawId(fail.Key.ID)
 
-			err = rs.SetKey(src, key)
-			if err != nil {
-				return err
-			}
+		err = rs.SetKey(src, key)
+		if err != nil {
+			log.Printf("fixup-read-write: %d/%d %s: index: %d, key: %s, timestamp: %s, " +
+				"to-copy: %v -> %v, size: %d, src set-key error: %v\n",
+				idx, len(dest.failed),
+				ctl.ab.String(), ctl.index, fail.Key.String(), fail.Timestamp.String(),
+				src.GetGroups(), dst.GetGroups(), fail.Size, err)
 
-			dst.SetTimestamp(rs.Mtime)
+			dest.really_failed = append(dest.really_failed, fail)
+			continue
+		}
 
-			err = ws.SetKey(dst, key, 0, rs.TotalSize, rs.TotalSize)
-			if err != nil {
-				return err
-			}
+		dst.SetTimestamp(rs.Mtime)
+
+		err = ws.SetKey(dst, key, 0, rs.TotalSize, rs.TotalSize)
+		if err != nil {
+			log.Printf("fixup-read-write: %d/%d %s: index: %d, key: %s, timestamp: %s, " +
+				"to-copy: %v -> %v, size: %d/%d, dst set-key error: %v\n",
+				idx, len(dest.failed),
+				ctl.ab.String(), ctl.index, fail.Key.String(), rs.Mtime.String(),
+				src.GetGroups(), dst.GetGroups(), fail.Size, rs.TotalSize, err)
+
+			dest.really_failed = append(dest.really_failed, fail)
+			continue
 		}
 
 		n, err := io.CopyN(ws, rs, int64(rs.TotalSize))
+		if err != nil {
+			log.Printf("fixup-read-write: %d/%d %s: index: %d, key: %s, timestamp: %s, " +
+				"copied: %v -> %v, copied-size: %d, total-size: %d, copy error: %v\n",
+				idx, len(dest.failed),
+				ctl.ab.String(), ctl.index, fail.Key.String(), rs.Mtime.String(),
+				src.GetGroups(), dst.GetGroups(), n, rs.TotalSize, err)
 
-		log.Printf("fixup-read-write: %d/%d %s: index: %d, key: %s: copied: %v -> %v, size: %d/%d %v\n",
-			idx, len(dest.failed),
-			ctl.ab.String(), ctl.index, (&fail.Key).String(),
-			src.GetGroups(), dst.GetGroups(), n, rs.TotalSize, err)
+			dest.really_failed = append(dest.really_failed, fail)
+		} else {
+			log.Printf("fixup-read-write: %d/%d %s: index: %d, key: %s, timestamp: %s, copied: %v -> %v, size: %d\n",
+				idx, len(dest.failed),
+				ctl.ab.String(), ctl.index, fail.Key.String(), rs.Mtime.String(),
+				src.GetGroups(), dst.GetGroups(), rs.TotalSize)
+		}
 	}
 
 	return nil
@@ -515,6 +535,8 @@ func (ctl *IteratorCtl) Fixup(dest []*destination) (err error) {
 					bad += 1
 					log.Printf("fixup: %s: index: %d, key: %s: could not remove key from groups: %v, errors: %v\n",
 						ctl.ab.String(), ctl.index, (&fail.Key).String(), src.GetGroups(), errors)
+
+					dst.really_failed = append(dst.really_failed, fail)
 				} else {
 					good += 1
 					log.Printf("fixup: %s: index: %d, key: %s: removed key from groups: %v\n",
@@ -525,7 +547,7 @@ func (ctl *IteratorCtl) Fixup(dest []*destination) (err error) {
 			}
 		}
 
-		log.Printf("fixup: %s: index: %d: destination %v, keys: %d: completed, successfully fixed: %d, failed to fix: %d, scheduled for read-write fixup: %d\n",
+		log.Printf("fixup: %s: index: %d: destination %v, keys: %d, removed: %d, failed to remove: %d, scheduled for read-write fixup: %d\n",
 			ctl.ab.String(), ctl.index, dst.groups, len(dst.failed), good, bad, len(read_write))
 
 		dst.failed = read_write
@@ -606,7 +628,7 @@ func (ctl *IteratorCtl) StartRecovery() (err error) {
 				atomic.AddUint64(&ctl.bad, bad)
 
 				if err != nil {
-					log.Fatalf("exiting\n")
+					log.Fatalf("start-recovery: could not read server-send results: %v\n", err)
 				}
 			}(dst)
 		}
@@ -628,9 +650,13 @@ func (ctl *IteratorCtl) StartRecovery() (err error) {
 	log.Printf("start-recovery: %s, index: %d, good: %d, bad: %d, keys: %d/%d: recovery completed\n",
 			ctl.ab.String(), ctl.index, ctl.good, ctl.bad, ctl.good+ctl.bad, ctl.keys_to_recover)
 
-	err = ctl.Fixup(dest)
-	if err != nil {
-		return err
+	ctl.Fixup(dest)
+	for _, dst := range dest {
+		for _, fail := range dst.really_failed {
+			log.Printf("start-recovery: %s, index: %d, failed key: %s\n",
+					ctl.ab.String(), ctl.index,
+					fail.Key.String())
+		}
 	}
 
 
