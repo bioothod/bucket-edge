@@ -328,22 +328,38 @@ func (d *destination) ReadServerSendResults() (good, bad uint64, err error) {
 	for ir := range d.ssend {
 		err = ir.Error()
 
-		if err != nil || ir.Reply().Status < 0 {
+		if err != nil {
 			bad++
 
 			if ir.Reply() != nil {
-				log.Printf("read-server-send-results: key: %s, position: %d/%d, status: %d\n",
+				log.Printf("read-server-send-results: failed key: %s, position: %d/%d, status: %d\n",
+					ir.Reply().Key.String(), ir.Reply().IteratedKeys, ir.Reply().TotalKeys, ir.Reply().Status)
+			}
+
+			continue
+		}
+
+		// special case, 'ping' reply, needed to show progress and to say client that iterator is alive and hasn't timed out
+		if ir.Reply().Status == 1 {
+			log.Printf("read-server-send-results: key: %s, position: %d/%d, status: %d\n",
+				ir.Reply().Key.String(), ir.Reply().IteratedKeys, ir.Reply().TotalKeys, ir.Reply().Status)
+			continue
+		}
+
+		if ir.Reply().Status < 0 {
+			bad++
+
+			if ir.Reply().Status < 0 {
+				log.Printf("read-server-send-results: failed key: %s, position: %d/%d, status: %d\n",
 					ir.Reply().Key.String(), ir.Reply().IteratedKeys, ir.Reply().TotalKeys, ir.Reply().Status)
 
-				if ir.Reply().Status < 0 && ir.Reply().Status != -int(syscall.ENOENT) {
-					d.failed = append(d.failed, *ir.Reply())
-				}
-			} else {
-				log.Printf("read-server-send-results: reply is null, error: %v\n", err)
+				d.failed = append(d.failed, *ir.Reply())
 			}
-		} else {
-			good++
+
+			continue
 		}
+
+		good++
 	}
 
 	return
@@ -367,7 +383,7 @@ func key_is_dead(session *elliptics.Session, fail *elliptics.DnetIteratorRespons
 
 			info := wd.Info()
 
-			// invalid timestamp, remove this key
+			// invalid timestamp, if there will be no valid timestamp, remove this key
 			if info.Mtime.Unix() < 0 || info.Mtime.Unix() > time.Now().Unix() + 100000 {
 				continue
 			}
@@ -470,11 +486,11 @@ func (ctl *IteratorCtl) Fixup(dest []*destination) (err error) {
 
 		// we need source group here, i.e. the one,
 		// where iteration ran and then we tried to recover those keys into @dst groups
-		session, err := ctl.gi.edge.DataSession([]uint32{ctl.gi.group_id})
+		src, err := ctl.gi.edge.DataSession([]uint32{ctl.gi.group_id})
 		if err != nil {
 			return nil
 		}
-		defer session.Delete()
+		defer src.Delete()
 
 		remove_key, err := elliptics.NewKey()
 		if err != nil {
@@ -487,10 +503,10 @@ func (ctl *IteratorCtl) Fixup(dest []*destination) (err error) {
 		for _, fail := range(dst.failed) {
 			remove_key.SetRawId(fail.Key.ID)
 
-			if key_is_dead(session, &fail, remove_key) {
+			if key_is_dead(src, &fail, remove_key) {
 				errors := make([]error, 0)
 
-				for r := range session.RemoveKey(remove_key) {
+				for r := range src.RemoveKey(remove_key) {
 					if r.Error() != nil {
 						errors = append(errors, r.Error())
 					}
@@ -498,12 +514,12 @@ func (ctl *IteratorCtl) Fixup(dest []*destination) (err error) {
 
 				if len(errors) != 0 {
 					bad += 1
-					log.Printf("fixup: %s: index: %d, key: %s: could not remove key from groups: %v: %v\n",
-						ctl.ab.String(), ctl.index, (&fail.Key).String(), session.GetGroups(), errors)
+					log.Printf("fixup: %s: index: %d, key: %s: could not remove key from groups: %v, errors: %v\n",
+						ctl.ab.String(), ctl.index, (&fail.Key).String(), src.GetGroups(), errors)
 				} else {
 					good += 1
 					log.Printf("fixup: %s: index: %d, key: %s: removed key from groups: %v\n",
-						ctl.ab.String(), ctl.index, (&fail.Key).String(), session.GetGroups())
+						ctl.ab.String(), ctl.index, (&fail.Key).String(), src.GetGroups())
 				}
 			} else {
 				read_write = append(read_write, fail)
