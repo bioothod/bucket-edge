@@ -236,15 +236,15 @@ func (ctl *IteratorCtl) ReadIteratorResponse() error {
 	return nil
 }
 
-func (ctl *IteratorCtl) PopResponse() (min *elliptics.DnetIteratorResponse, min_idx int, err error) {
+func (ctl *IteratorCtl) PopResponseIterator() (min *elliptics.DnetIteratorResponse, min_idx int, err error) {
 	min_idx = -1
 	for k, dec := range ctl.readers {
 		tmp, err := dec.Pop()
 		if err != nil {
 			if err != io.EOF {
-				log.Printf("pop-response: %s: chunk: %d, pop-error: %v\n", ctl.ab.String(), k, err)
+				log.Printf("pop-response-iterator: %s: chunk: %d, pop-error: %v\n", ctl.ab.String(), k, err)
 			} else {
-				log.Printf("pop-response: %s: chunk: %d, chunk has been processed\n", ctl.ab.String(), k)
+				log.Printf("pop-response-iterator: %s: chunk: %d, chunk has been processed\n", ctl.ab.String(), k)
 			}
 
 			delete(ctl.readers, k)
@@ -267,6 +267,7 @@ func (ctl *IteratorCtl) PopResponse() (min *elliptics.DnetIteratorResponse, min_
 	}
 
 	if min_idx != -1 {
+		//log.Printf("pop-response-iterator: %s: chunk: %d, key: %s\n", ctl.ab.String(), min_idx, min.Key.String())
 		return min, min_idx, nil
 	}
 
@@ -667,6 +668,9 @@ type GroupIteratorCtl struct {
 	iterators	map[int]*IteratorCtl
 	empty		bool
 
+	last_popped_response	*elliptics.DnetIteratorResponse
+	prev			*elliptics.DnetIteratorResponse
+
 	edge		*EdgeCtl
 
 	s		*elliptics.Session
@@ -768,19 +772,26 @@ func (gi *GroupIteratorCtl) RunIterator() (err error) {
 	return nil
 }
 
-func (gi *GroupIteratorCtl) PopResponse() (min *elliptics.DnetIteratorResponse, err error) {
+func (gi *GroupIteratorCtl) PopResponseGroupNoCheck() (min *elliptics.DnetIteratorResponse, err error) {
 	if gi.empty {
 		return nil, fmt.Errorf("Empty")
 	}
 
 	min_idx := -1
 	var min_ctl *IteratorCtl
+
+	if gi.last_popped_response != nil {
+		min = gi.last_popped_response
+		gi.last_popped_response = nil
+		return min, nil
+	}
+
 	for _, ctl := range gi.iterators {
 		if ctl.empty {
 			continue
 		}
 
-		resp, idx, err := ctl.PopResponse()
+		resp, idx, err := ctl.PopResponseIterator()
 		if err != nil {
 			ctl.empty = true
 			log.Printf("recovery: %s: failed to pop iterator response: %v\n", ctl.ab.String(), err)
@@ -810,8 +821,34 @@ func (gi *GroupIteratorCtl) PopResponse() (min *elliptics.DnetIteratorResponse, 
 		return nil, fmt.Errorf("Empty")
 	}
 
-	//log.Printf("pop-response: group: %d, key: %s\n", gi.group_id, (&min.Key).String())
+	//log.Printf("pop-response-group: group: %d, key: %s\n", gi.group_id, (&min.Key).String())
 	return min, nil
+}
+
+func (gi *GroupIteratorCtl) PopResponseGroup() (*elliptics.DnetIteratorResponse, error) {
+	if gi.empty {
+		return nil, fmt.Errorf("Empty")
+	}
+
+	for {
+		cur, err := gi.PopResponseGroupNoCheck()
+		if err != nil {
+			return nil, err
+		}
+
+		if gi.prev == nil || !KeyEqual(cur, gi.prev) {
+			gi.prev = cur
+			//log.Printf("pop-response-group: group: %d, key: %s\n", gi.group_id, cur.Key.String())
+			return cur, nil
+		}
+	}
+
+	return nil, fmt.Errorf("impossible error")
+}
+
+func (gi *GroupIteratorCtl) PushResponseGroup(min *elliptics.DnetIteratorResponse) {
+	gi.last_popped_response = min
+	gi.prev = nil
 }
 
 func (e *EdgeCtl) Merge(gis []*GroupIteratorCtl) (err error) {
@@ -820,7 +857,7 @@ func (e *EdgeCtl) Merge(gis []*GroupIteratorCtl) (err error) {
 	for {
 		for idx, gi := range gis {
 			if merge_groups[idx] == nil {
-				merge_groups[idx], err = gi.PopResponse()
+				merge_groups[idx], err = gi.PopResponseGroup()
 				if err != nil {
 					merge_groups[idx] = nil
 					continue
@@ -830,6 +867,14 @@ func (e *EdgeCtl) Merge(gis []*GroupIteratorCtl) (err error) {
 
 		var min *elliptics.DnetIteratorResponse = nil
 		min_idx := -1
+
+		push_back := func(mg *elliptics.DnetIteratorResponse, idx int) {
+			gis[min_idx].PushResponseGroup(min)
+
+			min = mg
+			min_idx = idx
+		}
+
 		for idx, mg := range merge_groups {
 			if min == nil {
 				min = mg
@@ -842,16 +887,15 @@ func (e *EdgeCtl) Merge(gis []*GroupIteratorCtl) (err error) {
 			}
 
 			if KeyLess(mg, min) {
-				min = mg
-				min_idx = idx
+				push_back(mg, idx)
 				continue
 			}
 
 			if KeyEqual(mg, min) {
 				// select this new key as @min if its timestamp is newer than current @min
 				if mg.Timestamp.After(min.Timestamp) {
-					min = mg
-					min_idx = idx
+					push_back(mg, idx)
+					continue
 				}
 			}
 		}
