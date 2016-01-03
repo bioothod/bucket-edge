@@ -762,13 +762,6 @@ func (gi *GroupIteratorCtl) RunIterator() (err error) {
 		return err
 	}
 
-	for _, ctl := range gi.iterators {
-		if ctl.err != nil {
-			log.Printf("iterator-start: iterator %s has failed: %v\n", ctl.ab.String(), ctl.err)
-			return err
-		}
-	}
-
 	return nil
 }
 
@@ -851,6 +844,49 @@ func (gi *GroupIteratorCtl) PushResponseGroup(min *elliptics.DnetIteratorRespons
 	gi.prev = nil
 }
 
+func (e *EdgeCtl) LookupInfo(gis []*GroupIteratorCtl, merge_groups[]*elliptics.DnetIteratorResponse) (err error) {
+	groups := make([]uint32, len(merge_groups))
+	var rr *elliptics.DnetIteratorResponse
+
+	for idx, resp := range merge_groups {
+		groups[idx] = gis[idx].group_id
+		if resp != nil {
+			rr = resp
+		}
+	}
+
+	if rr == nil {
+		log.Printf("lookup-info: all responses are nil")
+		return fmt.Errorf("lookup-info: all responses are nil")
+	}
+
+	s, err := e.DataSession(groups)
+	if err != nil {
+		log.Printf("lookup-info: could not create data session for groups: %v, error: %v\n", groups, err)
+		return err
+	}
+	defer s.Delete()
+
+	for l := range s.ParallelLookupID(&rr.Key) {
+		if l.Error() != nil {
+			continue
+		}
+
+		// set the timestamp from lookup response
+		group_id := l.Cmd().ID.Group
+		for idx, gi := range gis {
+			if gi.group_id == group_id {
+				if merge_groups[idx] != nil {
+					merge_groups[idx].Timestamp = l.Info().Mtime
+					break
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
 func (e *EdgeCtl) Merge(gis []*GroupIteratorCtl) (err error) {
 	merge_groups := make([]*elliptics.DnetIteratorResponse, len(gis), len(gis))
 
@@ -892,6 +928,12 @@ func (e *EdgeCtl) Merge(gis []*GroupIteratorCtl) (err error) {
 			}
 
 			if KeyEqual(mg, min) {
+				if min.Size != mg.Size && min.Timestamp == time.Unix(0, 0) {
+					e.LookupInfo(gis, merge_groups)
+					log.Printf("merge: key: %s: size mismatch: min-size: %d, pretender-size: %d, timestamps: min: %s, pretender: %s\n",
+						min.Key.String(), min.Size, mg.Size, min.Timestamp.String(), mg.Timestamp.String())
+				}
+
 				// select this new key as @min if its timestamp is newer than current @min
 				if mg.Timestamp.After(min.Timestamp) {
 					push_back(mg, idx)
@@ -914,14 +956,16 @@ func (e *EdgeCtl) Merge(gis []*GroupIteratorCtl) (err error) {
 				continue
 			}
 
-			if mg != nil {
-				if KeyEqual(min, mg) {
-					// skip recovering key into @mg group *only* if its timestamp
-					// equals to the @min timestamp (the newest key)
-					if min.Timestamp == mg.Timestamp {
-						merge_groups[idx] = nil
-						continue
-					}
+			if mg == nil {
+				continue
+			}
+
+			if KeyEqual(min, mg) {
+				// skip recovering key into @mg group *only* if its timestamp
+				// equals to the @min timestamp (the newest key)
+				if min.Timestamp == mg.Timestamp {
+					merge_groups[idx] = nil
+					continue
 				}
 			}
 
@@ -1017,8 +1061,20 @@ func (e *EdgeCtl) BucketRecovery(b *bucket.Bucket) (error) {
 		return err
 	}
 
+	var recovery_failed error
 	for _, gi := range gis {
 		gi.wait.Wait()
+
+		for _, ctl := range gi.iterators {
+			if ctl.err != nil {
+				log.Printf("bucket-recovery: iterator %s has failed: %v\n", ctl.ab.String(), ctl.err)
+				recovery_failed = ctl.err
+			}
+		}
+	}
+
+	if recovery_failed != nil {
+		return recovery_failed
 	}
 
 	err = e.Merge(gis)
