@@ -33,7 +33,7 @@ func main() {
 	flag.Parse()
 
 	if *bfile == "" {
-		log.Fatalf("You must specify bucket name")
+		log.Fatalf("You must specify file with bucket name")
 	}
 
 	if *config_file == "" {
