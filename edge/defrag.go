@@ -75,7 +75,7 @@ func (e *EdgeCtl) PutBucketBackFromDefrag(bs *Bstat) {
 	defer e.Mutex.Unlock()
 
 	bs.NeedDefrag--
-	log.Printf("bucket: %s, need-defrag: %d, need-recovery: %s\n", b.Name, bs.NeedDefrag, bs.NeedRecovery)
+	log.Printf("bucket: %s, need-defrag: %d, need-recovery: %s\n", bs.Bucket.Name, bs.NeedDefrag, bs.NeedRecovery)
 
 	if bs.NeedRecovery || bs.NeedDefrag > 0 {
 		e.Buckets[bs.Bucket.Name] = bs
@@ -104,7 +104,7 @@ func (e *EdgeCtl) PutBucketBackFromRecovery(bs *Bstat) {
 	defer e.Mutex.Unlock()
 
 	bs.NeedRecovery = false
-	log.Printf("bucket: %s, need-defrag: %d, need-recovery: %s\n", b.Name, bs.NeedDefrag, bs.NeedRecovery)
+	log.Printf("bucket: %s, need-defrag: %d, need-recovery: %s\n", bs.Bucket.Name, bs.NeedDefrag, bs.NeedRecovery)
 
 	if bs.NeedDefrag > 0 {
 		e.Buckets[bs.Bucket.Name] = bs
