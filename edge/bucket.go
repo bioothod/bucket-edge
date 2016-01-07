@@ -7,24 +7,25 @@ import (
 	"github.com/bioothod/backrunner/bucket"
 	"github.com/bioothod/elliptics-go/elliptics"
 	"log"
+	"sync"
+	"time"
 )
-
-type AbState struct {
-	DefragState	int32
-}
 
 type EdgeCtl struct {
 	Ell *etransport.Elliptics
 	Stat *elliptics.DnetStat
 	Session *elliptics.Session
 
-	AddressDefragMap map[elliptics.RawAddr]int
-	DefragStates map[elliptics.AddressBackend]AbState
+	Mutex	sync.Mutex
+	Buckets map[string]*Bstat
+	Hosts	map[elliptics.RawAddr]*Hstat
 
-	DefragCount int
-	Timeback int
+	DefragFreeRate		float64
+	DefragRemovedRate	float64
+	DefragCount		int
+	Timeback		time.Time
 
-	TmpPath string
+	TmpPath			string
 }
 
 func EdgeInit(config_file string) (e *EdgeCtl) {
@@ -35,8 +36,8 @@ func EdgeInit(config_file string) (e *EdgeCtl) {
 	}
 
 	e = &EdgeCtl {
-		AddressDefragMap: make(map[elliptics.RawAddr]int),
-		DefragStates: make(map[elliptics.AddressBackend]AbState),
+		Buckets: make(map[string]*Bstat),
+		Hosts: make(map[elliptics.RawAddr]*Hstat),
 	}
 
 	e.Ell, err = etransport.NewEllipticsTransport(conf)
@@ -77,4 +78,57 @@ func (e *EdgeCtl) GetBucket(bname string) (*bucket.Bucket, error) {
 	}
 
 	return b, nil
+}
+
+func (e *EdgeCtl) WantDefrag(b *bucket.Bucket, ab *elliptics.AddressBackend, st *elliptics.StatBackend) bool {
+	free_space_rate := bucket.FreeSpaceRatio(st, 0)
+	if free_space_rate > e.DefragFreeRate {
+		log.Printf("defrag: bucket: %s, %s, free-space-rate: %f, must be < %f\n",
+			b.Name, ab.String(), free_space_rate, e.DefragFreeRate)
+		return false
+	}
+
+	removed_space_rate := float64(st.VFS.BackendRemovedSize) / float64(st.VFS.TotalSizeLimit)
+	if removed_space_rate < e.DefragRemovedRate {
+		log.Printf("defrag: bucket: %s, %s, free-space-rate: %f, removed-space-rate: %f, must be > %f\n",
+			b.Name, ab.String(), free_space_rate,
+			removed_space_rate, e.DefragRemovedRate)
+		return false
+	}
+
+	if free_space_rate > 1 || removed_space_rate > 1 {
+		log.Printf("defrag: bucket: %s, %s, free-space-rate: %f, removed-space-rate: %f, invalid stats\n",
+			b.Name, ab.String(), free_space_rate, removed_space_rate)
+		return false
+	}
+
+	log.Printf("defrag: bucket: %s, %s, free-space-rate: %f, removed-space-rate: %f, queued for defrag\n",
+		b.Name, ab.String(), free_space_rate, removed_space_rate)
+	return true
+}
+
+func (e *EdgeCtl) InsertBucket(b *bucket.Bucket) {
+	e.Mutex.Lock()
+	defer e.Mutex.Unlock()
+
+	bs := &Bstat {
+		Bucket:		b,
+		NeedRecovery:	true,
+	}
+
+	for _, sg := range b.Group {
+		for ab, st := range sg.Ab {
+			_, ok := e.Hosts[ab.Addr]
+			if !ok {
+				e.Hosts[ab.Addr] = &Hstat{}
+			}
+
+			if e.WantDefrag(b, &ab, st) {
+				bs.NeedDefrag += 1
+			}
+		}
+	}
+
+	e.Buckets[b.Name] = bs
+	return
 }

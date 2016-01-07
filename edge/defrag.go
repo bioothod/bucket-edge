@@ -8,154 +8,199 @@ import (
 	"time"
 )
 
-const (
-	DefragBackendsPerServerDefault int = 3
-)
+type Bstat struct {
+	Bucket			*bucket.Bucket
+	NeedDefrag		int
+	NeedRecovery		bool
+}
 
-func (e *EdgeCtl) BucketStatusParse(b *bucket.Bucket, addr *elliptics.RawAddr, ch <-chan *elliptics.DnetBackendsStatus) (int, error) {
-	defrag_backends := make([]int32, 0)
-	total_backends := 0
+type Hstat struct {
+	// number of running defrag/recovery processes on given host
+	// worker can not start new defrag/recovery if it equals to limit stored in @EdgeCtl
+	DefragSlots		int
+	RecoverySlots		int
+}
 
-	for st := range ch {
-		if st.Error != nil {
-			return 0, st.Error
-		}
+func (e *EdgeCtl) SelectBucketForDefrag() (*Bstat, *elliptics.AddressBackend) {
+	e.Mutex.Lock()
+	defer e.Mutex.Unlock()
 
-		for _, backend_status := range st.Backends {
-			total_backends += 1
-
-			ab := elliptics.AddressBackend {
-				Addr: *addr,
-				Backend: backend_status.Backend,
-			}
-
-			if backend_status.DefragState == elliptics.DefragStateInProgress {
-				defrag_backends = append(defrag_backends, backend_status.Backend)
-
-				e.DefragStates[ab] = AbState{
-					DefragState: elliptics.DefragStateInProgress,
+	for bname, bs := range e.Buckets {
+		for _, sg := range bs.Bucket.Group {
+			for ab, st := range sg.Ab {
+				// there is no statistics for this group, skip it
+				if st.VFS.TotalSizeLimit == 0 {
+					log.Printf("defrag: bucket: %s, %s: no statistics for this backend\n",
+						bs.Bucket.Name, ab.String())
+					continue
 				}
-			}
 
-			if backend_status.DefragState == elliptics.DefragStateNotStarted {
-				prev_state, ok := e.DefragStates[ab]
-				if ok {
-					if prev_state.DefragState == elliptics.DefragStateInProgress {
-						delete(e.DefragStates, ab)
-					}
+				if st.RO {
+					log.Printf("defrag: bucket: %s, %s: backend is in read-only mode\n",
+						bs.Bucket.Name, ab.String())
+					continue
 				}
-			}
 
-			//log.Printf("bucket-status: bucket: %s, %s, defrag_state: %d, defrag_count: %d\n",
-			//	b.Name, ab.String(), backend_status.DefragState, defrag_count)
+				if bs.NeedDefrag == 0 {
+					continue
+				}
+
+				if !e.WantDefrag(bs.Bucket, &ab, st) {
+					continue
+				}
+
+				hs, ok := e.Hosts[ab.Addr]
+				if !ok {
+					log.Printf("defrag: bucket: %s, %s: there is no address in @Hosts map\n",
+						bs.Bucket.Name, ab.String())
+					continue
+				}
+
+				if hs.DefragSlots == e.DefragCount {
+					continue
+				}
+
+				hs.DefragSlots++
+				delete(e.Buckets, bname)
+				return bs, &ab
+			}
 		}
 	}
 
-	log.Printf("bucket-status: bucket: %s, address: %s, defrag_count: %d, total_backends: %d, backends: %v\n",
-		b.Name, addr.String(), len(defrag_backends), total_backends, defrag_backends)
-	return len(defrag_backends), nil
+	return nil, nil
 }
 
-func (e *EdgeCtl) BucketStatus(b *bucket.Bucket) (error) {
-	for addr, _ := range e.AddressDefragMap {
-		ch := e.Session.BackendsStatus(addr.DnetAddr())
-		defrag_count, err := e.BucketStatusParse(b, &addr, ch)
-		if err != nil {
-			log.Printf("bucket-status: bucket: %s: addr: %s: stat error: %v\n", b.Name, addr.String(), err)
-		}
+func (e *EdgeCtl) PutBucketBackFromDefrag(bs *Bstat) {
+	e.Mutex.Lock()
+	defer e.Mutex.Unlock()
 
-		e.AddressDefragMap[addr] = defrag_count
+	bs.NeedDefrag--
+
+	if bs.NeedRecovery || bs.NeedDefrag > 0 {
+		e.Buckets[bs.Bucket.Name] = bs
+		return
+	}
+
+	log.Printf("bucket: %s, recovered and defragmented\n", bs.Bucket.Name)
+}
+
+func (e *EdgeCtl) SelectBucketForRecovery() (*Bstat) {
+	e.Mutex.Lock()
+	defer e.Mutex.Unlock()
+
+	for bname, bs := range e.Buckets {
+		if bs.NeedRecovery {
+			delete(e.Buckets, bname)
+			return bs
+		}
 	}
 
 	return nil
 }
 
-func (e *EdgeCtl) BucketStartDefrag(b *bucket.Bucket) (err error) {
-	err = e.BucketStatus(b)
-	if err != nil {
-		return fmt.Errorf("bucket-start-defrag: bucket: %s, status error: %v", b.Name, err)
+func (e *EdgeCtl) PutBucketBackFromRecovery(bs *Bstat) {
+	e.Mutex.Lock()
+	defer e.Mutex.Unlock()
+
+	bs.NeedRecovery = false
+
+	if bs.NeedDefrag > 0 {
+		e.Buckets[bs.Bucket.Name] = bs
+		return
 	}
 
-	for ab, state := range e.DefragStates {
-		if state.DefragState == elliptics.DefragStateInProgress {
-			continue
-		}
+	log.Printf("bucket: %s, recovered and defragmented\n", bs.Bucket.Name)
+}
 
-		defrag_count, ok := e.AddressDefragMap[ab.Addr]
-		if !ok {
-			log.Printf("bucket-start-defrag: bucket: %s, %s: there is no status, not starting defrag",
-				b.Name, ab.String())
-			continue
-		}
+func (e *EdgeCtl) SetDefragSlots(ab *elliptics.AddressBackend, slots int) {
+	e.Mutex.Lock()
+	defer e.Mutex.Unlock()
 
-		if defrag_count >= e.DefragCount {
-			//log.Printf("bucket-start-defrag: bucket: %s, %s: defrag_count: %d, max: %d: not starting defrag\n",
-			//	b.Name, ab.String(), defrag_count, e.defrag_count)
-			continue
-		}
-
-		log.Printf("bucket-start-defrag: bucket: %s, %s: starting defrag\n", b.Name, ab.String())
-		ch := e.Session.BackendStartDefrag(ab.Addr.DnetAddr(), ab.Backend)
-		defrag_started, err := e.BucketStatusParse(b, &ab.Addr, ch)
-		if err != nil {
-			log.Printf("bucket-start-defrag: bucket: %s: %s: reply status error: %v\n", b.Name, ab.String(), err)
-		}
-
-		e.AddressDefragMap[ab.Addr] = defrag_count + defrag_started
+	hs, ok := e.Hosts[ab.Addr]
+	if ok {
+		hs.DefragSlots = slots
 	}
 
 	return
 }
 
-func (e *EdgeCtl) BucketDefrag(b *bucket.Bucket) (err error) {
-	for group_id, sg := range b.Group {
-		e.AddressDefragMap = make(map[elliptics.RawAddr]int)
-		e.DefragStates = make(map[elliptics.AddressBackend]AbState)
+func (e *EdgeCtl) StartDefrag() error {
+	bs, ab := e.SelectBucketForDefrag()
+	if bs == nil {
+		return nil
+	}
+	defer e.PutBucketBackFromDefrag(bs)
 
-		for ab, sb := range sg.Ab {
-			free_space_rate := bucket.FreeSpaceRatio(sb, 0)
-			removed_space_rate := float64(sb.VFS.BackendRemovedSize) / float64(sb.VFS.TotalSizeLimit)
+	s, err := e.DataSession(bs.Bucket.Meta.Groups)
+	if err != nil {
+		log.Printf("defag: could not create new session: %v\n", err)
+		return err
+	}
+	defer s.Delete()
 
-			// number of defrags per address will be correctly set in BucketStatusParse()
-			// we have to put address itself here, iteration over this map will request remote stats
-			e.AddressDefragMap[ab.Addr] = 0
-			e.DefragStates[ab] = AbState {
-						DefragState: sb.DefragState,
-					    }
+	s.BackendStartDefrag(ab.Addr.DnetAddr(), ab.Backend)
 
-			if sb.DefragState == elliptics.DefragStateInProgress {
-				log.Printf("bucket: %s, group: %d, %s: defragmentation is in progress",
-					b.Name, group_id, ab.String())
-				continue
+	finished := false
+	for {
+		for status := range s.BackendsStatus(ab.Addr.DnetAddr()) {
+			if status.Error != nil {
+				log.Printf("defrag: bucket: %s, %s: backend status error: %v\n", bs.Bucket.Name, ab.String(), err)
+				return nil
 			}
 
-			if e.Timeback != 0 && sb.DefragCompletionStatus == 0 {
-				d := time.Duration(e.Timeback) * time.Second
-				start_gap := time.Now().Add(-d)
+			defrag_slots := 0
+			for _, backend := range status.Backends {
+				if backend.Backend == ab.Backend {
+					finished = true
+					if backend.State != elliptics.BackendStateEnabled {
+						continue
+					}
 
-				if sb.DefragCompletionTime.After(start_gap) {
-					log.Printf("bucket: %s, group: %d, %s: defragmentation completed recently: %s, within last %d seconds\n",
-						b.Name, group_id, ab.String(), sb.DefragCompletionTime.String(), e.Timeback)
-					continue
+					if backend.DefragState == elliptics.DefragStateInProgress {
+						defrag_slots += 1
+						finished = false
+					}
 				}
 			}
 
-			log.Printf("bucket: %s, group: %d, %s: starting defragmentation, used: %d, removed: %d, total: %d, free-space-rate: %f, removed-space-rate: %f",
-				b.Name, group_id, ab.String(),
-				sb.VFS.BackendUsedSize, sb.VFS.BackendRemovedSize, sb.VFS.TotalSizeLimit,
-				free_space_rate, removed_space_rate)
+			e.SetDefragSlots(ab, defrag_slots)
 		}
 
-		for {
-			e.BucketStartDefrag(b)
-
-			if len(e.DefragStates) == 0 {
-				break
-			}
-
-			time.Sleep(30 * time.Second)
+		if finished {
+			break
 		}
+
+		time.Sleep(10 * time.Second)
 	}
 
-	return
+	return nil
+}
+
+func (e *EdgeCtl) StartRecovery() error {
+	bs := e.SelectBucketForRecovery()
+	if bs == nil {
+		return nil
+	}
+	defer e.PutBucketBackFromRecovery(bs)
+
+	e.BucketRecovery(bs.Bucket)
+	return nil
+}
+
+func (e *EdgeCtl) Run() error {
+	if len(e.Buckets) == 0 {
+		return fmt.Errorf("there are no buckets to run defrag/recovery")
+	}
+
+	err := e.StartDefrag()
+	if err != nil {
+		return err
+	}
+
+	err = e.StartRecovery()
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
