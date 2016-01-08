@@ -935,7 +935,7 @@ func (e *EdgeCtl) Merge(gis []*GroupIteratorCtl) (err error) {
 				min = mg
 				min_idx = idx
 			} else if KeyEqual(mg, min) {
-				merge_groups[min_idx] = mg
+				merge_groups[idx] = mg
 			} else {
 				// this key is greater than @min, push it back into iterator
 				gi.PushResponseGroup(mg)
@@ -987,6 +987,13 @@ func (e *EdgeCtl) Merge(gis []*GroupIteratorCtl) (err error) {
 
 				// should not be reached
 				re.dst = append(re.dst, gis[idx].group_id)
+
+				log.Printf("merge: bucket: %s, key: %s: min-size: %d, pretender-size: %d, " +
+					"timestamps: min: %s, pretender: %s, equal: %v, dst: %v\n",
+					gis[idx].bucket.Name, min.Key.String(),
+					min.Size, mg.Size,
+					min.Timestamp.String(), mg.Timestamp.String(), min.Timestamp == mg.Timestamp,
+					re.dst)
 			}
 		} else {
 			want_timestamp_sort = true
