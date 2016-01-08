@@ -160,8 +160,8 @@ func (ctl *IteratorCtl) WriteChunk(ch []*elliptics.DnetIteratorResponse) error {
 	tmp_path := path.Join(ctl.tmp_dir, strconv.Itoa(ctl.chunk_id))
 	out, err := os.OpenFile(tmp_path, os.O_RDWR | os.O_TRUNC | os.O_CREATE, 0644)
 	if err != nil {
-		log.Printf("write-chunk: %s: could not open tmp file '%s': %v\n",
-			ctl.ab.String(), tmp_path, err)
+		log.Printf("write-chunk: bucket: %s, %s: could not open tmp file '%s': %v\n",
+			ctl.gi.bucket.Name, ctl.ab.String(), tmp_path, err)
 		return err
 	}
 
@@ -169,16 +169,16 @@ func (ctl *IteratorCtl) WriteChunk(ch []*elliptics.DnetIteratorResponse) error {
 	for _, resp := range ch {
 		err = enc.Encode(resp)
 		if err != nil {
-			log.Printf("write-chunk: %s: could not encode chunk %d: %v\n",
-				ctl.ab.String(), ctl.chunk_id, err)
+			log.Printf("write-chunk: bucket: %s, %s: could not encode chunk %d: %v\n",
+				ctl.gi.bucket.Name, ctl.ab.String(), ctl.chunk_id, err)
 			return err
 		}
 	}
 
 	reader, err := NewChunkReader(tmp_path)
 	if err != nil {
-		log.Printf("write-chunk: %s: could not create chunk reader for file '%s': %v\n",
-			ctl.ab.String(), tmp_path, err)
+		log.Printf("write-chunk: bucket: %s, %s: could not create chunk reader for file '%s': %v\n",
+			ctl.gi.bucket.Name, ctl.ab.String(), tmp_path, err)
 		return err
 	}
 
@@ -200,7 +200,7 @@ func (ctl *IteratorCtl) ReadIteratorResponse() error {
 		ctl.iter_id = ir.ID()
 
 		if ir.Error() != nil {
-			log.Printf("read-iterator-response: %s: error: %v\n", ctl.ab.String(), ir.Error())
+			log.Printf("read-iterator-response: bucket: %s, %s: error: %v\n", ctl.gi.bucket.Name, ctl.ab.String(), ir.Error())
 			return ir.Error()
 		}
 
@@ -211,8 +211,8 @@ func (ctl *IteratorCtl) ReadIteratorResponse() error {
 		chunk[idx] = iresp
 		idx++
 		if idx % 10240 == 0 {
-			log.Printf("read-iterator-response: %s: %d/%d, chunks: %d\n",
-				ctl.ab.String(), iresp.IteratedKeys, iresp.TotalKeys, ctl.chunk_id)
+			log.Printf("read-iterator-response: bucket: %s, %s: %d/%d, chunks: %d\n",
+				ctl.gi.bucket.Name, ctl.ab.String(), iresp.IteratedKeys, iresp.TotalKeys, ctl.chunk_id)
 		}
 
 		if idx == max_idx {
@@ -223,15 +223,15 @@ func (ctl *IteratorCtl) ReadIteratorResponse() error {
 				return err
 			}
 
-			log.Printf("read-iterator-response: %s: %d/%d, chunks: %d\n",
-				ctl.ab.String(), iresp.IteratedKeys, iresp.TotalKeys, ctl.chunk_id)
+			log.Printf("read-iterator-response: bucket: %s, %s: %d/%d, chunks: %d\n",
+				ctl.gi.bucket.Name, ctl.ab.String(), iresp.IteratedKeys, iresp.TotalKeys, ctl.chunk_id)
 		}
 	}
 
 	ctl.WriteChunk(chunk[0:idx])
 
-	log.Printf("read-iterator-response: %s: completed keys: %d, chunks: %d\n",
-		ctl.ab.String(), ctl.total_keys, ctl.chunk_id)
+	log.Printf("read-iterator-response: bucket: %s, %s: completed keys: %d, chunks: %d\n",
+		ctl.gi.bucket.Name, ctl.ab.String(), ctl.total_keys, ctl.chunk_id)
 
 	return nil
 }
@@ -242,9 +242,9 @@ func (ctl *IteratorCtl) PopResponseIterator() (min *elliptics.DnetIteratorRespon
 		tmp, err := dec.Pop()
 		if err != nil {
 			if err != io.EOF {
-				log.Printf("pop-response-iterator: %s: chunk: %d, pop-error: %v\n", ctl.ab.String(), k, err)
+				log.Printf("pop-response-iterator: bucket: %s, %s: chunk: %d, pop-error: %v\n", ctl.gi.bucket.Name, ctl.ab.String(), k, err)
 			} else {
-				log.Printf("pop-response-iterator: %s: chunk: %d, chunk has been processed\n", ctl.ab.String(), k)
+				log.Printf("pop-response-iterator: bucket: %s, %s: chunk: %d, chunk has been processed\n", ctl.ab.String(), k)
 			}
 
 			delete(ctl.readers, k)
@@ -456,10 +456,10 @@ func (ctl *IteratorCtl) FixupReadWrite(dest *destination) (err error) {
 
 		err = rs.SetKey(src, key)
 		if err != nil {
-			log.Printf("fixup-read-write: %d/%d %s: index: %d, key: %s, timestamp: %s, " +
+			log.Printf("fixup-read-write: %d/%d bucket: %s, %s: index: %d, key: %s, timestamp: %s, " +
 				"to-copy: %v -> %v, size: %d, src set-key error: %v\n",
 				idx, len(dest.failed),
-				ctl.ab.String(), ctl.index, fail.Key.String(), fail.Timestamp.String(),
+				ctl.gi.bucket.Name, ctl.ab.String(), ctl.index, fail.Key.String(), fail.Timestamp.String(),
 				src.GetGroups(), dst.GetGroups(), fail.Size, err)
 
 			dest.really_failed = append(dest.really_failed, fail)
@@ -470,10 +470,10 @@ func (ctl *IteratorCtl) FixupReadWrite(dest *destination) (err error) {
 
 		err = ws.SetKey(dst, key, 0, rs.TotalSize, rs.TotalSize)
 		if err != nil {
-			log.Printf("fixup-read-write: %d/%d %s: index: %d, key: %s, timestamp: %s, " +
+			log.Printf("fixup-read-write: %d/%d bucket: %s, %s: index: %d, key: %s, timestamp: %s, " +
 				"to-copy: %v -> %v, size: %d/%d, dst set-key error: %v\n",
 				idx, len(dest.failed),
-				ctl.ab.String(), ctl.index, fail.Key.String(), rs.Mtime.String(),
+				ctl.gi.bucket.Name, ctl.ab.String(), ctl.index, fail.Key.String(), rs.Mtime.String(),
 				src.GetGroups(), dst.GetGroups(), fail.Size, rs.TotalSize, err)
 
 			dest.really_failed = append(dest.really_failed, fail)
@@ -482,17 +482,17 @@ func (ctl *IteratorCtl) FixupReadWrite(dest *destination) (err error) {
 
 		n, err := io.CopyN(ws, rs, int64(rs.TotalSize))
 		if err != nil {
-			log.Printf("fixup-read-write: %d/%d %s: index: %d, key: %s, timestamp: %s, " +
+			log.Printf("fixup-read-write: %d/%d bucket: %s, %s: index: %d, key: %s, timestamp: %s, " +
 				"copied: %v -> %v, copied-size: %d, total-size: %d, copy error: %v\n",
 				idx, len(dest.failed),
-				ctl.ab.String(), ctl.index, fail.Key.String(), rs.Mtime.String(),
+				ctl.gi.bucket.Name, ctl.ab.String(), ctl.index, fail.Key.String(), rs.Mtime.String(),
 				src.GetGroups(), dst.GetGroups(), n, rs.TotalSize, err)
 
 			dest.really_failed = append(dest.really_failed, fail)
 		} else {
-			log.Printf("fixup-read-write: %d/%d %s: index: %d, key: %s, timestamp: %s, copied: %v -> %v, size: %d\n",
+			log.Printf("fixup-read-write: %d/%d bucket: %s, %s: index: %d, key: %s, timestamp: %s, copied: %v -> %v, size: %d\n",
 				idx, len(dest.failed),
-				ctl.ab.String(), ctl.index, fail.Key.String(), rs.Mtime.String(),
+				ctl.gi.bucket.Name, ctl.ab.String(), ctl.index, fail.Key.String(), rs.Mtime.String(),
 				src.GetGroups(), dst.GetGroups(), rs.TotalSize)
 		}
 	}
@@ -534,22 +534,23 @@ func (ctl *IteratorCtl) Fixup(dest []*destination) (err error) {
 
 				if len(errors) != 0 {
 					bad += 1
-					log.Printf("fixup: %s: index: %d, key: %s: could not remove key from groups: %v, errors: %v\n",
-						ctl.ab.String(), ctl.index, (&fail.Key).String(), src.GetGroups(), errors)
+					log.Printf("fixup: bucket: %s, %s: index: %d, key: %s: could not remove key from groups: %v, errors: %v\n",
+						ctl.gi.bucket.Name, ctl.ab.String(), ctl.index, (&fail.Key).String(), src.GetGroups(), errors)
 
 					dst.really_failed = append(dst.really_failed, fail)
 				} else {
 					good += 1
-					log.Printf("fixup: %s: index: %d, key: %s: removed key from groups: %v\n",
-						ctl.ab.String(), ctl.index, (&fail.Key).String(), src.GetGroups())
+					log.Printf("fixup: bucket: %s, %s: index: %d, key: %s: removed key from groups: %v\n",
+						ctl.gi.bucket.Name, ctl.ab.String(), ctl.index, (&fail.Key).String(), src.GetGroups())
 				}
 			} else {
 				read_write = append(read_write, fail)
 			}
 		}
 
-		log.Printf("fixup: %s: index: %d: destination %v, keys: %d, removed: %d, failed to remove: %d, scheduled for read-write fixup: %d\n",
-			ctl.ab.String(), ctl.index, dst.groups, len(dst.failed), good, bad, len(read_write))
+		log.Printf("fixup: bucket: %s, %s: index: %d: destination %v, " +
+			"keys: %d, removed: %d, failed to remove: %d, scheduled for read-write fixup: %d\n",
+			ctl.gi.bucket.Name, ctl.ab.String(), ctl.index, dst.groups, len(dst.failed), good, bad, len(read_write))
 
 		dst.failed = read_write
 		err = ctl.FixupReadWrite(dst)
@@ -580,14 +581,14 @@ func (ctl *IteratorCtl) StartRecovery() (err error) {
 		if !inserted {
 			dst, err := NewDestination(k.dst)
 			if err != nil {
-				log.Printf("start-recovery: %s, index: %d, dst-groups: %v: could not create new destination: %v\n",
-					ctl.ab.String(), ctl.index, k.dst, err)
+				log.Printf("start-recovery: bucket: %s, %s, index: %d, dst-groups: %v: could not create new destination: %v\n",
+					ctl.gi.bucket.Name, ctl.ab.String(), ctl.index, k.dst, err)
 				return err
 			}
 			defer dst.Free()
 
-			log.Printf("start-recovery: %s, index: %d, new-dst-groups: %v\n",
-					ctl.ab.String(), ctl.index, k.dst)
+			log.Printf("start-recovery: bucket: %s, %s, index: %d, new-dst-groups: %v\n",
+					ctl.gi.bucket.Name, ctl.ab.String(), ctl.index, k.dst)
 
 			dst.keys = append(dst.keys, k.resp.Key)
 			//log.Printf("start-recovery: %s -> %v\n", k.resp.Key.String(), dst.groups)
@@ -595,7 +596,8 @@ func (ctl *IteratorCtl) StartRecovery() (err error) {
 		}
 	}
 
-	log.Printf("start-recovery: %s, index: %d, keys: %d: starting recovery\n", ctl.ab.String(), ctl.index, len(ctl.rkeys))
+	log.Printf("start-recovery: bucket: %s, %s, index: %d, keys: %d: starting recovery\n",
+		ctl.gi.bucket.Name, ctl.ab.String(), ctl.index, len(ctl.rkeys))
 
 	ctl.rkeys = ctl.rkeys[0:0]
 
@@ -604,8 +606,8 @@ func (ctl *IteratorCtl) StartRecovery() (err error) {
 		for _, dst := range dest {
 			s, err := ctl.gi.edge.DataSession([]uint32{ctl.gi.group_id})
 			if err != nil {
-				log.Printf("start-recovery: %s, index: %d, dst-groups: %v: could not create data session: %v\n",
-						ctl.ab.String(), ctl.index, dst.groups, err)
+				log.Printf("start-recovery: bucket: %s, %s, index: %d, dst-groups: %v: could not create data session: %v\n",
+						ctl.gi.bucket.Name, ctl.ab.String(), ctl.index, dst.groups, err)
 				return err
 			}
 			defer s.Delete()
@@ -613,8 +615,8 @@ func (ctl *IteratorCtl) StartRecovery() (err error) {
 
 			dst.ssend, err = s.ServerSend(dst.keys, 0, dst.groups)
 			if err != nil {
-				log.Printf("start-recovery: %s, index: %d, dst-groups: %v: server-send failed: %v\n",
-						ctl.ab.String(), ctl.index, dst.groups, err)
+				log.Printf("start-recovery: bucket: %s, %s, index: %d, dst-groups: %v: server-send failed: %v\n",
+						ctl.gi.bucket.Name, ctl.ab.String(), ctl.index, dst.groups, err)
 				return err
 			}
 
@@ -623,13 +625,13 @@ func (ctl *IteratorCtl) StartRecovery() (err error) {
 				defer wait.Done()
 				good, bad, err := dst.ReadServerSendResults()
 
-				log.Printf("start-recovery: %s, index: %d, dst-groups: %v, recovered: %d, errors: %d, total: %d, last error: %v\n",
-						ctl.ab.String(), ctl.index, dst.groups, good, bad, len(dst.keys), err)
+				log.Printf("start-recovery: bucket: %s, %s, index: %d, dst-groups: %v, recovered: %d, errors: %d, total: %d, last error: %v\n",
+						ctl.gi.bucket.Name, ctl.ab.String(), ctl.index, dst.groups, good, bad, len(dst.keys), err)
 				atomic.AddUint64(&ctl.good, good)
 				atomic.AddUint64(&ctl.bad, bad)
 
 				if err != nil {
-					log.Fatalf("start-recovery: could not read server-send results: %v\n", err)
+					log.Fatalf("start-recovery: bucket: %s, could not read server-send results: %v\n", ctl.gi.bucket.Name, err)
 				}
 			}(dst)
 		}
@@ -648,15 +650,14 @@ func (ctl *IteratorCtl) StartRecovery() (err error) {
 		}
 	}
 
-	log.Printf("start-recovery: %s, index: %d, good: %d, bad: %d, keys: %d/%d: recovery completed\n",
-			ctl.ab.String(), ctl.index, ctl.good, ctl.bad, ctl.good+ctl.bad, ctl.keys_to_recover)
+	log.Printf("start-recovery: bucket: %s, %s, index: %d, good: %d, bad: %d, keys: %d/%d: recovery completed\n",
+			ctl.gi.bucket.Name, ctl.ab.String(), ctl.index, ctl.good, ctl.bad, ctl.good+ctl.bad, ctl.keys_to_recover)
 
 	ctl.Fixup(dest)
 	for _, dst := range dest {
 		for _, fail := range dst.really_failed {
-			log.Printf("start-recovery: %s, index: %d, failed key: %s\n",
-					ctl.ab.String(), ctl.index,
-					fail.Key.String())
+			log.Printf("start-recovery: bucket: %s, %s, index: %d, failed key: %s\n",
+					ctl.gi.bucket.Name, ctl.ab.String(), ctl.index,	fail.Key.String())
 		}
 	}
 
@@ -665,6 +666,8 @@ func (ctl *IteratorCtl) StartRecovery() (err error) {
 }
 
 type GroupIteratorCtl struct {
+	bucket		*bucket.Bucket
+
 	iterators	map[int]*IteratorCtl
 	empty		bool
 
@@ -694,8 +697,9 @@ func (e *EdgeCtl) DataSession(groups []uint32) (s *elliptics.Session, err error)
 	return s, nil
 }
 
-func (e *EdgeCtl) NewGroupIteratorCtl(tmp_dir string, group_id uint32, sg *elliptics.StatGroup) (gi *GroupIteratorCtl, err error) {
+func (e *EdgeCtl) NewGroupIteratorCtl(b *bucket.Bucket, tmp_dir string, group_id uint32, sg *elliptics.StatGroup) (gi *GroupIteratorCtl, err error) {
 	gi = &GroupIteratorCtl {
+		bucket:		b,
 		iterators:	make(map[int]*IteratorCtl),
 		empty:		true,
 		sg:		sg,
@@ -723,13 +727,14 @@ func (gi *GroupIteratorCtl) RunIterator() (err error) {
 	iterator_idx := 0
 	for ab, sb := range gi.sg.Ab {
 		if len(sb.ID) == 0 {
-			log.Printf("iterator-start: %s: there are no IDs\n", ab.String())
+			log.Printf("iterator-start: bucket: %s, %s: there are no IDs\n", gi.bucket.Name, ab.String())
 			continue
 		}
 
 		ctl, err := gi.NewIteratorCtl(&ab, iterator_idx)
 		if err != nil {
-			log.Printf("iterator-start: could not create iterator controller for %s: %v\n", ab.String(), err)
+			log.Printf("iterator-start: bucket: %s, %s: could not create iterator controller for %s: %v\n",
+				gi.bucket.Name, ab.String(), err)
 			continue
 		}
 
@@ -758,7 +763,7 @@ func (gi *GroupIteratorCtl) RunIterator() (err error) {
 	}
 
 	if len(gi.iterators) == 0 {
-		err = fmt.Errorf("iterator-start: could not start any iterator from %d backends", len(gi.sg.Ab))
+		err = fmt.Errorf("iterator-start: bucket: %s: could not start any iterator from %d backends", gi.bucket.Name, len(gi.sg.Ab))
 		return err
 	}
 
@@ -787,7 +792,7 @@ func (gi *GroupIteratorCtl) PopResponseGroupNoCheck() (min *elliptics.DnetIterat
 		resp, idx, err := ctl.PopResponseIterator()
 		if err != nil {
 			ctl.empty = true
-			log.Printf("recovery: %s: failed to pop iterator response: %v\n", ctl.ab.String(), err)
+			log.Printf("recovery: bucket: %s, %s: failed to pop iterator response: %v\n", ctl.gi.bucket.Name, ctl.ab.String(), err)
 			continue
 		}
 
@@ -878,8 +883,8 @@ func (e *EdgeCtl) LookupInfo(gis []*GroupIteratorCtl, merge_groups[]*elliptics.D
 			if gi.group_id == group_id {
 				if merge_groups[idx] != nil {
 					merge_groups[idx].Timestamp = l.Info().Mtime
-					log.Printf("lookup-info: %s: group: %d, size: %d, time: %s\n",
-						rr.Key.String(), group_id, l.Info().Size, l.Info().Mtime.String())
+					log.Printf("lookup-info: bucket: %s, key: %s: group: %d, size: %d, time: %s\n",
+						gi.bucket.Name, rr.Key.String(), group_id, l.Info().Size, l.Info().Mtime.String())
 					break
 				}
 			}
@@ -964,8 +969,10 @@ func (e *EdgeCtl) Merge(gis []*GroupIteratorCtl) (err error) {
 				if min.Size != mg.Size && (min.Timestamp == time.Unix(0, 0) || mg.Timestamp == time.Unix(0, 0)) {
 					e.LookupInfo(gis, merge_groups)
 
-					log.Printf("merge: key: %s: size mismatch: min-size: %d, pretender-size: %d, timestamps: min: %s, pretender: %s\n",
-						min.Key.String(), min.Size, mg.Size, min.Timestamp.String(), mg.Timestamp.String())
+					log.Printf("merge: bucket: %s, key: %s: size mismatch: " +
+						"min-size: %d, pretender-size: %d, timestamps: min: %s, pretender: %s\n",
+						gis[idx].bucket.Name, min.Key.String(),
+						min.Size, mg.Size, min.Timestamp.String(), mg.Timestamp.String())
 
 					want_timestamp_sort = true
 					break
@@ -1035,15 +1042,15 @@ func (e *EdgeCtl) Merge(gis []*GroupIteratorCtl) (err error) {
 
 		gi := gis[min_idx]
 		if gi == nil {
-			err = fmt.Errorf("merge: key: %s, min_idx: %d, gis: %v: gi is nil",
-				(&re.resp.Key).String(), min_idx, gis)
+			err = fmt.Errorf("merge: bucket: %s, key: %s, min_idx: %d, gis: %v: gi is nil",
+				gi.bucket.Name, re.resp.Key.String(), min_idx, gis)
 			log.Printf("%s\n", err)
 			return err
 		}
 		ctl := gi.iterators[int(min.ID)]
 		if ctl == nil {
-			err = fmt.Errorf("merge: key: %s, group: %d, id: %d, iterators: %v: ctl is nil",
-				(&re.resp.Key).String(), gi.group_id, min.ID, gi.iterators)
+			err = fmt.Errorf("merge: bucket: %s, key: %s, group: %d, id: %d, iterators: %v: ctl is nil",
+				gi.bucket.Name, re.resp.Key.String(), gi.group_id, min.ID, gi.iterators)
 			log.Printf("%s\n", err)
 			return err
 		}
@@ -1051,14 +1058,14 @@ func (e *EdgeCtl) Merge(gis []*GroupIteratorCtl) (err error) {
 		ctl.rkeys = append(ctl.rkeys, &re)
 		ctl.keys_to_recover += 1
 
-		log.Printf("merge: key: %s, group: %d, %s -> groups: %v\n",
-			(&re.resp.Key).String(), gi.group_id, ctl.ab.String(), re.dst)
+		log.Printf("merge: bucket: %s, key: %s, group: %d, %s -> groups: %v\n",
+			gi.bucket.Name, re.resp.Key.String(), gi.group_id, ctl.ab.String(), re.dst)
 
 		if len(ctl.rkeys) == 1024 {
 			err = ctl.StartRecovery()
 			if err != nil {
-				log.Printf("merge: group: %d, %s, dst-groups: %v: recovery failed: %v\n",
-					gi.group_id, ctl.ab.String(), re.dst, err)
+				log.Printf("merge: bucket: %s, %s, group: %d, dst-groups: %v: recovery failed: %v\n",
+					gi.bucket.Name, ctl.ab.String(), gi.group_id, re.dst, err)
 				return err
 			}
 		}
@@ -1069,15 +1076,15 @@ func (e *EdgeCtl) Merge(gis []*GroupIteratorCtl) (err error) {
 			if len(ctl.rkeys) != 0 {
 				err = ctl.StartRecovery()
 				if err != nil {
-					log.Printf("merge: group: %d, %s: recovery failed: %v\n",
-						gi.group_id, ctl.ab.String(), err)
+					log.Printf("merge: bucket: %s, %s, group: %d: recovery failed: %v\n",
+						gi.bucket.Name, ctl.ab.String(), gi.group_id, err)
 					return err
 				}
 			}
 		}
 	}
 
-	log.Printf("Recovery completed\n")
+	log.Printf("bucket: %s: recovery completed\n", gis[0].bucket.Name)
 	return nil
 }
 
@@ -1094,15 +1101,15 @@ func (e *EdgeCtl) BucketRecovery(b *bucket.Bucket) (error) {
 
 	gis := make([]*GroupIteratorCtl, 0)
 	for group_id, sg := range b.Group {
-		gi, err := e.NewGroupIteratorCtl(tmp, group_id, sg)
+		gi, err := e.NewGroupIteratorCtl(b, tmp, group_id, sg)
 		if err != nil {
-			log.Printf("bucket-recovery: could not create iterator control structure for group %d: %v\n", group_id, err)
+			log.Printf("bucket-recovery: bucket: %s: could not create iterator control structure for group %d: %v\n", b.Name, group_id, err)
 			return err
 		}
 
 		err = gi.RunIterator()
 		if err != nil {
-			log.Printf("bucket-recovery: could not start copy iterator in group %d: %v\n", group_id, err)
+			log.Printf("bucket-recovery: bucket: %s: could not start copy iterator in group %d: %v\n", b.Name, group_id, err)
 			return err
 		}
 
@@ -1110,7 +1117,7 @@ func (e *EdgeCtl) BucketRecovery(b *bucket.Bucket) (error) {
 	}
 
 	if len(gis) <= 1 {
-		err = fmt.Errorf("bucket-recovery: required at least 2 group iterators, but we have %d, exiting\n", len(gis))
+		err = fmt.Errorf("bucket-recovery: bucket: %s: required at least 2 group iterators, but we have %d, exiting\n", b.Name, len(gis))
 		log.Printf("%v\n", err)
 		return err
 	}
@@ -1121,7 +1128,7 @@ func (e *EdgeCtl) BucketRecovery(b *bucket.Bucket) (error) {
 
 		for _, ctl := range gi.iterators {
 			if ctl.err != nil {
-				log.Printf("bucket-recovery: iterator %s has failed: %v\n", ctl.ab.String(), ctl.err)
+				log.Printf("bucket-recovery: bucket: %s: iterator %s has failed: %v\n", b.Name, ctl.ab.String(), ctl.err)
 				recovery_failed = ctl.err
 			}
 		}
