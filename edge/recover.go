@@ -845,12 +845,12 @@ func (gi *GroupIteratorCtl) PushResponseGroup(min *elliptics.DnetIteratorRespons
 }
 
 func (e *EdgeCtl) LookupInfo(gis []*GroupIteratorCtl, merge_groups[]*elliptics.DnetIteratorResponse) (err error) {
-	groups := make([]uint32, len(merge_groups))
+	groups := make([]uint32, 0, len(merge_groups))
 	var rr *elliptics.DnetIteratorResponse
 
 	for idx, resp := range merge_groups {
-		groups[idx] = gis[idx].group_id
 		if resp != nil {
+			groups = append(groups, gis[idx].group_id)
 			rr = resp
 		}
 	}
@@ -878,6 +878,8 @@ func (e *EdgeCtl) LookupInfo(gis []*GroupIteratorCtl, merge_groups[]*elliptics.D
 			if gi.group_id == group_id {
 				if merge_groups[idx] != nil {
 					merge_groups[idx].Timestamp = l.Info().Mtime
+					log.Printf("lookup-info: %s: group: %d, size: %d, time: %s\n",
+						rr.Key.String(), group_id, l.Info().Size, l.Info().Mtime.String())
 					break
 				}
 			}
@@ -891,92 +893,145 @@ func (e *EdgeCtl) Merge(gis []*GroupIteratorCtl) (err error) {
 	merge_groups := make([]*elliptics.DnetIteratorResponse, len(gis), len(gis))
 
 	for {
-		for idx, gi := range gis {
-			if merge_groups[idx] == nil {
-				merge_groups[idx], err = gi.PopResponseGroup()
-				if err != nil {
-					merge_groups[idx] = nil
-					continue
-				}
-			}
+		for idx, _ := range merge_groups {
+			merge_groups[idx] = nil
 		}
 
 		var min *elliptics.DnetIteratorResponse = nil
 		min_idx := -1
 
-		for idx, mg := range merge_groups {
-			if min == nil {
-				min = mg
-				min_idx = idx
+		re := RecoveryEntry {
+			dst:		make([]uint32, 0),
+		}
+
+		for idx, gi := range gis {
+			mg, err := gi.PopResponseGroup()
+			if err != nil {
 				continue
 			}
 
-			if mg == nil {
+			if min_idx == -1 || min == nil {
+				min = mg
+				min_idx = idx
+
+				merge_groups[min_idx] = mg
 				continue
 			}
 
 			if KeyLess(mg, min) {
 				gis[min_idx].PushResponseGroup(min)
 
+				// clear all previously seen groups, keys there are all equal to @min or nil, which means are all higher than @mg
+				for prev_idx := 0; prev_idx < idx; prev_idx++ {
+					merge_groups[prev_idx] = nil
+				}
+
 				min = mg
 				min_idx = idx
-				continue
-			}
-
-			if KeyEqual(mg, min) {
-				if min.Size != mg.Size && min.Timestamp == time.Unix(0, 0) {
-					e.LookupInfo(gis, merge_groups)
-					log.Printf("merge: key: %s: size mismatch: min-size: %d, pretender-size: %d, timestamps: min: %s, pretender: %s\n",
-						min.Key.String(), min.Size, mg.Size, min.Timestamp.String(), mg.Timestamp.String())
-				}
-
-				// select this new key as @min if its timestamp is newer than current @min
-				// do not call @push_back(), since it will push current min key back into iterator,
-				// but since it is the same key, recovery for this key will be repeated
-				if mg.Timestamp.After(min.Timestamp) {
-					min = mg
-					min_idx = idx
-					continue
-				}
+			} else if KeyEqual(mg, min) {
+				merge_groups[min_idx] = mg
+			} else {
+				// this key is greater than @min, push it back into iterator
+				gi.PushResponseGroup(mg)
 			}
 		}
 
+		// we haven't found anything to recover, exit
 		if min == nil {
 			break
 		}
 
-		re := RecoveryEntry {
-			resp:		min,
-			dst:		make([]uint32, 0),
+		want_timestamp_sort := false
+
+		// if we have timestamps, always perform timestamp-based search for 'source' recovery group
+		if min.Timestamp == time.Unix(0, 0) {
+			// run over groups we have found, if particular group is nil, we will recover key into it
+			// if particular group is NOT nil, check its key's size (and timestamp if size differs)
+			// if size differs, request timestamps from every group and run timestamp-based search for new source group
+			for idx, mg := range merge_groups {
+				if mg == nil {
+					// there is no key in this group, recover key there
+					re.dst = append(re.dst, gis[idx].group_id)
+					continue
+				}
+
+				if mg == min {
+					continue
+				}
+
+				// there is a key in given group, but its size differs from the size in @min group
+				// if size differs and we do not have timestamp, lookup every key and set timestamps for all of them
+				if min.Size != mg.Size && (min.Timestamp == time.Unix(0, 0) || mg.Timestamp == time.Unix(0, 0)) {
+					e.LookupInfo(gis, merge_groups)
+
+					log.Printf("merge: key: %s: size mismatch: min-size: %d, pretender-size: %d, timestamps: min: %s, pretender: %s\n",
+						min.Key.String(), min.Size, mg.Size, min.Timestamp.String(), mg.Timestamp.String())
+
+					want_timestamp_sort = true
+					break
+				}
+
+				// skip recovering key into @mg group *only* if its timestamp and size
+				// equal to the @min timestamp (the newest key) and size
+				if min.Timestamp == mg.Timestamp && min.Size == mg.Size {
+					continue
+				}
+
+				// should not be reached
+				re.dst = append(re.dst, gis[idx].group_id)
+			}
+		} else {
+			want_timestamp_sort = true
 		}
 
-		for idx, mg := range merge_groups {
-			if idx == min_idx {
-				continue
+		if want_timestamp_sort {
+			// clear dst array
+			if len(re.dst) != 0 {
+				re.dst = re.dst[:0]
 			}
 
-			if mg == nil {
-				continue
-			}
-
-			if KeyEqual(min, mg) {
-				// skip recovering key into @mg group *only* if its timestamp
-				// equals to the @min timestamp (the newest key)
-				if min.Timestamp == mg.Timestamp && min.Size == mg.Size {
-					merge_groups[idx] = nil
+			// search for source group for timestamp based recovery
+			for idx, mg := range merge_groups {
+				if mg == nil || mg == min {
 					continue
+				}
+
+				// select this new key as @min ('source' for recovery) if its timestamp is newer than current @min
+				if mg.Timestamp.After(min.Timestamp) {
+					min = mg
+					min_idx = idx
 				}
 			}
 
-			re.dst = append(re.dst, gis[idx].group_id)
-		}
+			// @min contains the 'source' group for recovery, put everything else into destination array
+			for idx, mg := range merge_groups {
+				if mg == nil {
+					// there is no key in this group, recovery it there
+					re.dst = append(re.dst, gis[idx].group_id)
+					continue
+				}
 
-		merge_groups[min_idx] = nil
+				if mg == min {
+					continue
+				}
+
+				// skip recovering key into @mg group *only* if its timestamp and size
+				// equal to the @min timestamp (the newest key) and size
+				if min.Timestamp == mg.Timestamp && min.Size == mg.Size {
+					continue
+				}
+
+				// we have a key, but its timestamp is older
+				re.dst = append(re.dst, gis[idx].group_id)
+			}
+		}
 
 		// all replicas are alive
 		if len(re.dst) == 0 {
 			continue
 		}
+
+		re.resp = min
 
 		gi := gis[min_idx]
 		if gi == nil {
