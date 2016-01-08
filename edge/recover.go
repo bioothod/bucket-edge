@@ -1097,7 +1097,7 @@ func (e *EdgeCtl) Merge(gis []*GroupIteratorCtl) (err error) {
 }
 
 func (e *EdgeCtl) BucketRecovery(b *bucket.Bucket) (error) {
-	tmp := path.Join(e.TmpPath, fmt.Sprintf("recovery.%d.%s", strconv.Itoa(os.Getpid()), b.Name))
+	tmp := path.Join(e.TmpPath, fmt.Sprintf("recovery.%d.%s", os.Getpid(), b.Name))
 
 	os.RemoveAll(tmp)
 	err := os.MkdirAll(tmp, os.ModeDir | 0755)
