@@ -536,13 +536,13 @@ func (ctl *IteratorCtl) Fixup(dest []*destination) (err error) {
 				if len(errors) != 0 {
 					bad += 1
 					log.Printf("fixup: bucket: %s, %s: index: %d, key: %s: could not remove key from groups: %v, errors: %v\n",
-						ctl.gi.bucket.Name, ctl.ab.String(), ctl.index, (&fail.Key).String(), src.GetGroups(), errors)
+						ctl.gi.bucket.Name, ctl.ab.String(), ctl.index, fail.Key.String(), src.GetGroups(), errors)
 
 					dst.really_failed = append(dst.really_failed, fail)
 				} else {
 					good += 1
 					log.Printf("fixup: bucket: %s, %s: index: %d, key: %s: removed key from groups: %v\n",
-						ctl.gi.bucket.Name, ctl.ab.String(), ctl.index, (&fail.Key).String(), src.GetGroups())
+						ctl.gi.bucket.Name, ctl.ab.String(), ctl.index, fail.Key.String(), src.GetGroups())
 				}
 			} else {
 				read_write = append(read_write, fail)
@@ -785,7 +785,7 @@ func (gi *GroupIteratorCtl) PopResponseGroupNoCheck() (min *elliptics.DnetIterat
 		return min, nil
 	}
 
-	for _, ctl := range gi.iterators {
+	for ctl_idx, ctl := range gi.iterators {
 		if ctl.empty {
 			continue
 		}
@@ -798,7 +798,7 @@ func (gi *GroupIteratorCtl) PopResponseGroupNoCheck() (min *elliptics.DnetIterat
 		}
 
 		if min_idx == -1 {
-			min_ctl = ctl
+			min_ctl = gi.iterators[ctl_idx]
 			min = resp
 			min_idx = idx
 			continue
@@ -807,7 +807,7 @@ func (gi *GroupIteratorCtl) PopResponseGroupNoCheck() (min *elliptics.DnetIterat
 		if KeyLess(resp, min) {
 			min_ctl.PushResponse(min, min_idx)
 
-			min_ctl = ctl
+			min_ctl = gi.iterators[ctl_idx]
 			min = resp
 			min_idx = idx
 		} else {
@@ -857,7 +857,7 @@ func (e *EdgeCtl) LookupInfo(gis []*GroupIteratorCtl, merge_groups[]*elliptics.D
 	for idx, resp := range merge_groups {
 		if resp != nil {
 			groups = append(groups, gis[idx].group_id)
-			rr = resp
+			rr = merge_groups[idx]
 		}
 	}
 
@@ -1108,8 +1108,8 @@ func (e *EdgeCtl) BucketRecovery(b *bucket.Bucket) (error) {
 	defer os.RemoveAll(tmp)
 
 	gis := make([]*GroupIteratorCtl, 0)
-	for group_id, sg := range b.Group {
-		gi, err := e.NewGroupIteratorCtl(b, tmp, group_id, sg)
+	for group_id, _ := range b.Group {
+		gi, err := e.NewGroupIteratorCtl(b, tmp, group_id, b.Group[group_id])
 		if err != nil {
 			log.Printf("bucket-recovery: bucket: %s: could not create iterator control structure for group %d: %v\n", b.Name, group_id, err)
 			return err
