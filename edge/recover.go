@@ -785,7 +785,7 @@ func (gi *GroupIteratorCtl) PopResponseGroupNoCheck() (min *elliptics.DnetIterat
 		return min, nil
 	}
 
-	for ctl_idx, ctl := range gi.iterators {
+	for _, ctl := range gi.iterators {
 		if ctl.empty {
 			continue
 		}
@@ -797,8 +797,8 @@ func (gi *GroupIteratorCtl) PopResponseGroupNoCheck() (min *elliptics.DnetIterat
 			continue
 		}
 
-		if min_idx == -1 {
-			min_ctl = gi.iterators[ctl_idx]
+		if min_ctl == nil {
+			min_ctl = ctl
 			min = resp
 			min_idx = idx
 			continue
@@ -807,11 +807,11 @@ func (gi *GroupIteratorCtl) PopResponseGroupNoCheck() (min *elliptics.DnetIterat
 		if KeyLess(resp, min) {
 			min_ctl.PushResponse(min, min_idx)
 
-			min_ctl = gi.iterators[ctl_idx]
+			min_ctl = ctl
 			min = resp
 			min_idx = idx
 		} else {
-			min_ctl.PushResponse(resp, idx)
+			ctl.PushResponse(resp, idx)
 		}
 	}
 
