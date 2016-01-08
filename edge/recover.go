@@ -244,7 +244,8 @@ func (ctl *IteratorCtl) PopResponseIterator() (min *elliptics.DnetIteratorRespon
 			if err != io.EOF {
 				log.Printf("pop-response-iterator: bucket: %s, %s: chunk: %d, pop-error: %v\n", ctl.gi.bucket.Name, ctl.ab.String(), k, err)
 			} else {
-				log.Printf("pop-response-iterator: bucket: %s, %s: chunk: %d, chunk has been processed\n", ctl.ab.String(), k)
+				log.Printf("pop-response-iterator: bucket: %s, %s: chunk: %d, chunk has been processed\n",
+					ctl.gi.bucket.Name, ctl.ab.String(), k)
 			}
 
 			delete(ctl.readers, k)
