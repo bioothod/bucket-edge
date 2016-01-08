@@ -934,6 +934,9 @@ func (e *EdgeCtl) Merge(gis []*GroupIteratorCtl) (err error) {
 
 				min = mg
 				min_idx = idx
+
+				// fill the slot in @merge_group to prevent sending to be recovered data to itself
+				merge_groups[idx] = mg
 			} else if KeyEqual(mg, min) {
 				merge_groups[idx] = mg
 			} else {
