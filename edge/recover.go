@@ -105,7 +105,7 @@ func (a DnetIteratorResponseByPosition) Less(i, j int) bool {
 
 
 type IteratorCtl struct {
-	ab		*elliptics.AddressBackend
+	ab		elliptics.AddressBackend
 
 	gi		*GroupIteratorCtl
 
@@ -133,7 +133,7 @@ type IteratorCtl struct {
 func (gi *GroupIteratorCtl) NewIteratorCtl(ab *elliptics.AddressBackend, index int) (*IteratorCtl, error) {
 	ctl := &IteratorCtl {
 		tmp_dir:	path.Join(gi.tmp_dir, ab.String()),
-		ab:		ab,
+		ab:		*ab,
 		index:		index,
 		readers:	make(map[int]*ChunkReader),
 		empty:		true,
