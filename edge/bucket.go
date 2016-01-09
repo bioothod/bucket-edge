@@ -102,8 +102,22 @@ func (e *EdgeCtl) WantDefrag(b *bucket.Bucket, ab *elliptics.AddressBackend, st 
 		return false
 	}
 
-	log.Printf("defrag: bucket: %s, %s, free-space-rate: %f, removed-space-rate: %f, queued for defrag\n",
-		b.Name, ab.String(), free_space_rate, removed_space_rate)
+	if st.DefragCompletionStatus == 0 {
+		if st.DefragCompletionTime.After(e.Timeback) {
+			log.Printf("defrag: bucket: %s, %s: do not need defrag since previous time it was completed at: %s, " +
+				"must be completed before: %s\n",
+				b.Name, st.DefragCompletionTime.String(), e.Timeback.String())
+			return false
+		}
+	} else {
+		log.Printf("defrag: bucket: %s, %s: completion status: %d, time: %s\n",
+			b.Name, st.DefragCompletionStatus, st.DefragCompletionTime.String())
+	}
+
+	log.Printf("defrag: bucket: %s, %s, free-space-rate: %f, removed-space-rate: %f, " +
+		"last completion status: %d, time: %s, completed before timeback: %s, queued for defrag\n",
+		b.Name, ab.String(), free_space_rate, removed_space_rate,
+		st.DefragCompletionStatus, st.DefragCompletionTime.String(), e.Timeback.String())
 	return true
 }
 
