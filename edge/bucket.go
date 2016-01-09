@@ -133,3 +133,21 @@ func (e *EdgeCtl) InsertBucket(b *bucket.Bucket) {
 	e.Buckets[b.Name] = bs
 	return
 }
+
+func (e *EdgeCtl) Run() error {
+	if len(e.Buckets) == 0 {
+		return fmt.Errorf("there are no buckets to run defrag/recovery")
+	}
+
+	err := e.StartDefrag()
+	if err != nil {
+		return err
+	}
+
+	err = e.StartRecovery()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
