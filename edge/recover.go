@@ -192,7 +192,7 @@ func (ctl *IteratorCtl) WriteChunk(ch []*elliptics.DnetIteratorResponse) error {
 }
 
 func (ctl *IteratorCtl) ReadIteratorResponse() error {
-	max_idx := 102400
+	max_idx := 500000
 	idx := 0
 	chunk := make([]*elliptics.DnetIteratorResponse, max_idx, max_idx)
 
