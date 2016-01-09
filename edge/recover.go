@@ -798,6 +798,12 @@ func (gi *GroupIteratorCtl) PopResponseGroupNoCheck() (min *elliptics.DnetIterat
 			continue
 		}
 
+		if resp == nil {
+			ctl.empty = true
+			log.Printf("recovery: bucket: %s, %s: iterator is empty\n", ctl.gi.bucket.Name, ctl.ab.String())
+			continue
+		}
+
 		if min_ctl == nil {
 			min_ctl = ctl
 			min = resp
