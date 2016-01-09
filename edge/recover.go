@@ -443,7 +443,8 @@ func (ctl *IteratorCtl) FixupReadWrite(dest *destination) (err error) {
 		dst.SetGroups(dest.groups)
 
 		// set no-checksum flag if this key could not be recovered because of failed checksum
-		if fail.Status == -int(syscall.EILSEQ) {
+		// -22 error means either broken blob, or invalid header/footer, try to recover it by reading data without checksum verification
+		if fail.Status == -int(syscall.EILSEQ) || fail.Status == -int(syscall.EINVAL) {
 			src.SetIOflags(elliptics.DNET_IO_FLAGS_NOCSUM)
 
 			// if there is a checksum problem and key looks valid (it has been checked in @key_is_dead() function),
