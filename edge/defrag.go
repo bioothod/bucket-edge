@@ -1,7 +1,6 @@
 package edge
 
 import (
-	"fmt"
 	"github.com/bioothod/backrunner/bucket"
 	"github.com/bioothod/elliptics-go/elliptics"
 	"log"
@@ -81,37 +80,6 @@ func (e *EdgeCtl) PutBucketBackFromDefrag(bs *Bstat) {
 		e.Buckets[bs.Bucket.Name] = bs
 		return
 	}
-
-	log.Printf("bucket: %s, recovered and defragmented\n", bs.Bucket.Name)
-}
-
-func (e *EdgeCtl) SelectBucketForRecovery() (*Bstat) {
-	e.Mutex.Lock()
-	defer e.Mutex.Unlock()
-
-	for bname, bs := range e.Buckets {
-		if bs.NeedRecovery {
-			delete(e.Buckets, bname)
-			return bs
-		}
-	}
-
-	return nil
-}
-
-func (e *EdgeCtl) PutBucketBackFromRecovery(bs *Bstat) {
-	e.Mutex.Lock()
-	defer e.Mutex.Unlock()
-
-	bs.NeedRecovery = false
-	log.Printf("bucket: %s, need-defrag: %d, need-recovery: %v\n", bs.Bucket.Name, bs.NeedDefrag, bs.NeedRecovery)
-
-	if bs.NeedDefrag > 0 {
-		e.Buckets[bs.Bucket.Name] = bs
-		return
-	}
-
-	log.Printf("bucket: %s, recovered and defragmented\n", bs.Bucket.Name)
 }
 
 func (e *EdgeCtl) SetDefragSlots(ab *elliptics.AddressBackend, slots int) {
@@ -173,35 +141,6 @@ func (e *EdgeCtl) StartDefrag() error {
 		}
 
 		time.Sleep(10 * time.Second)
-	}
-
-	return nil
-}
-
-func (e *EdgeCtl) StartRecovery() error {
-	bs := e.SelectBucketForRecovery()
-	if bs == nil {
-		return nil
-	}
-	defer e.PutBucketBackFromRecovery(bs)
-
-	e.BucketRecovery(bs.Bucket)
-	return nil
-}
-
-func (e *EdgeCtl) Run() error {
-	if len(e.Buckets) == 0 {
-		return fmt.Errorf("there are no buckets to run defrag/recovery")
-	}
-
-	err := e.StartDefrag()
-	if err != nil {
-		return err
-	}
-
-	err = e.StartRecovery()
-	if err != nil {
-		return err
 	}
 
 	return nil
