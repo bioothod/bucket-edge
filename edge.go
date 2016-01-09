@@ -26,7 +26,7 @@ func main() {
 		"Defragmentation will only start if backend's free rate is less than this value")
 	defrag_removed_rate := flag.Float64("defrag-removed-rate", DefragRemovedRateDefault,
 		"Defragmentation will only start if backend's removed rate is more than this value")
-	tm := flag.Int("timeback", 0,
+	tm := flag.Int("timeback", 60 * 60 * 24 * 7,
 		"The gap in seconds back from current time. If backend defragmentation or recovery was completed within this gap, do not run it again")
 	workers := flag.Int("workers", NumWorkersDefault, "Maximum number of defrag/recovery workers per cluster")
 	tmp_path := flag.String("tmp-path", "", "Path where all temporal objects will be stored")
