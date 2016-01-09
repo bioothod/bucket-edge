@@ -2,6 +2,7 @@ package edge
 
 import (
 	"encoding/gob"
+	"encoding/json"
 	"fmt"
 	"github.com/bioothod/backrunner/bucket"
 	"github.com/bioothod/elliptics-go/elliptics"
@@ -16,6 +17,10 @@ import (
 	"syscall"
 	"time"
 )
+
+type BucketRecoveryState struct {
+	CompletionTime		time.Time
+}
 
 type DnetIteratorResponseByKey []*elliptics.DnetIteratorResponse
 func (a DnetIteratorResponseByKey) Len() int {
@@ -1159,6 +1164,138 @@ func (e *EdgeCtl) BucketRecovery(b *bucket.Bucket) (error) {
 	err = e.Merge(gis)
 	if err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func (e *EdgeCtl) SelectBucketForRecovery() (*Bstat) {
+	e.Mutex.Lock()
+	defer e.Mutex.Unlock()
+
+	for bname, bs := range e.Buckets {
+		if bs.NeedRecovery {
+			delete(e.Buckets, bname)
+			return bs
+		}
+	}
+
+	return nil
+}
+
+func (e *EdgeCtl) PutBucketBackFromRecovery(bs *Bstat, need_recovery bool) {
+	e.Mutex.Lock()
+	defer e.Mutex.Unlock()
+
+	bs.NeedRecovery = need_recovery
+	log.Printf("bucket: %s, need-defrag: %d, need-recovery: %v\n", bs.Bucket.Name, bs.NeedDefrag, bs.NeedRecovery)
+
+	if bs.NeedDefrag > 0 {
+		e.Buckets[bs.Bucket.Name] = bs
+		return
+	}
+}
+
+func (e *EdgeCtl) LoadRecoveryState(bs *Bstat, state *BucketRecoveryState) error {
+	ms, err := e.Ell.MetadataSession()
+	if err != nil {
+		log.Printf("load-recovery-state: bucket: %s: could not create metadata session, err: %v\n", bs.Bucket.Name, err)
+		return err
+	}
+	defer ms.Delete()
+
+	ms.SetNamespace(bucket.BucketNamespace)
+
+	reader, err := elliptics.NewReadSeeker(ms, fmt.Sprintf("%s.recovery.state", bs.Bucket.Name))
+	if err != nil {
+		log.Printf("load-recovery-state: bucket: %s: could not create read-seeker, err: %v", bs.Bucket.Name, err)
+		return err
+	}
+
+	data := make([]byte, reader.TotalSize)
+
+	n, err := reader.Read(data)
+	if err != nil {
+		log.Printf("load-recovery-state: bucket: %s: could not write data, data-size: %d/%d, err: %v", bs.Bucket.Name, n, len(data), err)
+		return err
+	}
+
+	err = json.Unmarshal(data, state)
+	if err != nil {
+		log.Printf("load-recovery-state: bucket: %s: could not unmarshal json, err: %v", bs.Bucket.Name, err)
+		return err
+	}
+
+	log.Printf("load-recovery-state: bucket: %s: successfully loaded recovery state", bs.Bucket.Name)
+	return nil
+}
+
+func (e *EdgeCtl) SaveRecoveryState(bs *Bstat) error {
+	ms, err := e.Ell.MetadataSession()
+	if err != nil {
+		log.Printf("save-recovery-state: bucket: %s: could not create metadata session, err: %v\n", bs.Bucket.Name, err)
+		return err
+	}
+	defer ms.Delete()
+
+	ms.SetNamespace(bucket.BucketNamespace)
+
+	state := BucketRecoveryState {
+		CompletionTime:		time.Now(),
+	}
+
+	data, err := json.Marshal(&state)
+	if err != nil {
+		log.Printf("save-recovery-state: bucket: %s: could not marshal json, struct: %v, err: %v", bs.Bucket.Name, state, err)
+		return err
+	}
+
+	writer, err := elliptics.NewWriteSeeker(ms, fmt.Sprintf("%s.recovery.state", bs.Bucket.Name), 0, uint64(len(data)), 0)
+	if err != nil {
+		log.Printf("save-recovery-state: bucket: %s: could not create write-seeker, data-size: %d, err: %v", bs.Bucket.Name, len(data), err)
+		return err
+	}
+
+	n, err := writer.Write(data)
+	if err != nil {
+		log.Printf("save-recovery-state: bucket: %s: could not write data, data-size: %d/%d, err: %v", bs.Bucket.Name, n, len(data), err)
+		return err
+	}
+
+	log.Printf("save-recovery-state: bucket: %s: successfully saved recovery state", bs.Bucket.Name)
+	return nil
+}
+
+func (e *EdgeCtl) StartRecovery() error {
+	bs := e.SelectBucketForRecovery()
+	if bs == nil {
+		return nil
+	}
+
+	var state BucketRecoveryState
+
+	err := e.LoadRecoveryState(bs, &state)
+	if err == nil {
+		if state.CompletionTime.After(e.Timeback) {
+			log.Printf("recovery: bucket: %s, do not start recovery since previous time it was completed at: %s, must be completed before: %s\n",
+				bs.Bucket.Name, state.CompletionTime.String(), e.Timeback.String())
+
+			e.PutBucketBackFromRecovery(bs, false)
+			return nil
+		} else {
+			log.Printf("recovery: bucket: %s, last completion time: %s, completed before timeback: %s\n",
+				bs.Bucket.Name, state.CompletionTime.String(), e.Timeback.String())
+		}
+	} else {
+		log.Printf("recovery: bucket: %s, could not load recovery state, starting recovery, err: %v\n", bs.Bucket.Name, err)
+	}
+
+
+	err = e.BucketRecovery(bs.Bucket)
+	e.PutBucketBackFromRecovery(bs, err != nil)
+
+	if err == nil {
+		e.SaveRecoveryState(bs)
 	}
 
 	return nil
