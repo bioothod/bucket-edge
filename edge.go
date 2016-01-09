@@ -66,7 +66,7 @@ func main() {
 		b, err := e.GetBucket(bname)
 		if err != nil {
 			log.Printf("Could not get bucket '%s': %v\n", bname, err)
-			return
+			continue
 		}
 
 		e.InsertBucket(b)
@@ -74,6 +74,10 @@ func main() {
 
 	if err = scanner.Err(); err != nil {
 		log.Fatalf("Error reading file '%s': %v\n", *bfile, err)
+	}
+
+	if len(e.Buckets) == 0 {
+		log.Fatalf("Could not load any bucket, exiting\n")
 	}
 
 	var wait sync.WaitGroup
