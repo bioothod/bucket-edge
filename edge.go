@@ -60,27 +60,37 @@ func main() {
 
 	scanner := bufio.NewScanner(r)
 
+	bnames := make([]string, 0)
 	for scanner.Scan() {
 		bname := scanner.Text()
 
-		b, err := e.GetBucket(bname)
-		if err != nil {
-			log.Printf("Could not get bucket '%s': %v\n", bname, err)
-			continue
-		}
-
-		e.InsertBucket(b)
+		bnames = append(bnames, bname)
 	}
-
-	e.ScanHosts()
 
 	if err = scanner.Err(); err != nil {
 		log.Fatalf("Error reading file '%s': %v\n", *bfile, err)
 	}
 
-	if len(e.Buckets) == 0 {
-		log.Fatalf("Could not load any bucket, exiting\n")
+	if len(bnames) == 0 {
+		log.Fatalf("Could not read any bucket, exiting\n")
 	}
+
+	need_exit := false
+	e.InitStats(bnames)
+
+	go func() {
+		for !need_exit {
+			for i := 0; i < 30; i++ {
+				if need_exit {
+					return
+				}
+
+				time.Sleep(time.Second)
+			}
+
+			e.UpdateStats()
+		}
+	}()
 
 	var wait sync.WaitGroup
 	for idx := 0; idx < *workers; idx++ {
@@ -92,15 +102,17 @@ func main() {
 			for {
 				err = e.Run()
 				if err != nil {
-					return
+					break
 				}
 
 				time.Sleep(time.Second)
 			}
 
+			log.Printf("defrag/recovery worker completed\n")
 		}()
 	}
 
 	wait.Wait()
+	need_exit = true
 	return
 }

@@ -1252,18 +1252,42 @@ func (e *EdgeCtl) SaveRecoveryState(bs *Bstat) error {
 
 	writer, err := elliptics.NewWriteSeeker(ms, fmt.Sprintf("%s.recovery.state", bs.Bucket.Name), 0, uint64(len(data)), 0)
 	if err != nil {
-		log.Printf("save-recovery-state: bucket: %s: could not create write-seeker, data-size: %d, err: %v", bs.Bucket.Name, len(data), err)
+		log.Printf("save-recovery-state: bucket: %s: could not create write-seeker, data-size: %d, err: %v",
+			bs.Bucket.Name, len(data), err)
 		return err
 	}
 
 	n, err := writer.Write(data)
 	if err != nil {
-		log.Printf("save-recovery-state: bucket: %s: could not write data, data-size: %d/%d, err: %v", bs.Bucket.Name, n, len(data), err)
+		log.Printf("save-recovery-state: bucket: %s: could not write data, data-size: %d/%d, err: %v",
+			bs.Bucket.Name, n, len(data), err)
 		return err
 	}
 
 	log.Printf("save-recovery-state: bucket: %s: successfully saved recovery state", bs.Bucket.Name)
 	return nil
+}
+
+func (e *EdgeCtl) WantRecovery(bs *Bstat) bool {
+	var state BucketRecoveryState
+
+	err := e.LoadRecoveryState(bs, &state)
+	if err == nil {
+		if state.CompletionTime.After(e.Timeback) {
+			log.Printf("want-recovery: bucket: %s, do not start recovery " +
+				"since previous time it was completed at: %s, must be completed before: %s\n",
+				bs.Bucket.Name, state.CompletionTime.String(), e.Timeback.String())
+
+			return false
+		} else {
+			log.Printf("want-recovery: bucket: %s, last completion time: %s, completed before timeback: %s\n",
+				bs.Bucket.Name, state.CompletionTime.String(), e.Timeback.String())
+		}
+	} else {
+		log.Printf("want-recovery: bucket: %s, could not load recovery state, starting recovery, err: %v\n", bs.Bucket.Name, err)
+	}
+
+	return true
 }
 
 func (e *EdgeCtl) StartRecovery() error {
@@ -1272,26 +1296,7 @@ func (e *EdgeCtl) StartRecovery() error {
 		return nil
 	}
 
-	var state BucketRecoveryState
-
-	err := e.LoadRecoveryState(bs, &state)
-	if err == nil {
-		if state.CompletionTime.After(e.Timeback) {
-			log.Printf("recovery: bucket: %s, do not start recovery since previous time it was completed at: %s, must be completed before: %s\n",
-				bs.Bucket.Name, state.CompletionTime.String(), e.Timeback.String())
-
-			e.PutBucketBackFromRecovery(bs, false)
-			return nil
-		} else {
-			log.Printf("recovery: bucket: %s, last completion time: %s, completed before timeback: %s\n",
-				bs.Bucket.Name, state.CompletionTime.String(), e.Timeback.String())
-		}
-	} else {
-		log.Printf("recovery: bucket: %s, could not load recovery state, starting recovery, err: %v\n", bs.Bucket.Name, err)
-	}
-
-
-	err = e.BucketRecovery(bs.Bucket)
+	err := e.BucketRecovery(bs.Bucket)
 	e.PutBucketBackFromRecovery(bs, err != nil)
 
 	if err == nil {

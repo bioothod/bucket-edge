@@ -121,14 +121,14 @@ func (e *EdgeCtl) WantDefrag(b *bucket.Bucket, ab *elliptics.AddressBackend, st 
 	return true
 }
 
-func (e *EdgeCtl) InsertBucket(b *bucket.Bucket) {
-	e.Mutex.Lock()
-	defer e.Mutex.Unlock()
-
+func (e *EdgeCtl) InsertBucket(b *bucket.Bucket, insert_new bool) {
 	bs := &Bstat {
 		Bucket:		b,
-		NeedRecovery:	true,
 	}
+	bs.NeedRecovery = e.WantRecovery(bs)
+
+	e.Mutex.Lock()
+	defer e.Mutex.Unlock()
 
 	for _, sg := range b.Group {
 		for ab, st := range sg.Ab {
@@ -143,8 +143,19 @@ func (e *EdgeCtl) InsertBucket(b *bucket.Bucket) {
 		}
 	}
 
+	old_bs, ok := e.Buckets[b.Name]
+	if ok {
+		*old_bs = *bs
+
+		// remove bucket if it doesn't need defragmentation or recovery
+		if bs.NeedDefrag == 0 && !bs.NeedRecovery {
+			delete(e.Buckets, b.Name)
+		}
+	} else if insert_new && (bs.NeedDefrag > 0 || bs.NeedRecovery) {
+		e.Buckets[b.Name] = bs
+	}
+
 	log.Printf("bucket: %s, need-defrag: %d, need-recovery: %v\n", b.Name, bs.NeedDefrag, bs.NeedRecovery)
-	e.Buckets[b.Name] = bs
 	return
 }
 
@@ -164,4 +175,35 @@ func (e *EdgeCtl) Run() error {
 	}
 
 	return nil
+}
+
+func (e *EdgeCtl) update_stats(bnames []string, insert_new bool) error {
+	for _, bname := range bnames {
+		b, err := e.GetBucket(bname)
+		if err != nil {
+			log.Printf("Could not get bucket '%s': %v\n", bname, err)
+			continue
+		}
+
+		e.InsertBucket(b, insert_new)
+	}
+
+	e.ScanDefragHosts()
+
+	return nil
+}
+
+func (e *EdgeCtl) InitStats(bnames []string) error {
+	return e.update_stats(bnames, true)
+}
+
+func (e *EdgeCtl) UpdateStats() error {
+	bnames := make([]string, 0)
+	e.Mutex.Lock()
+	for bname, _ := range e.Buckets {
+		bnames = append(bnames, bname)
+	}
+	e.Mutex.Unlock()
+
+	return e.update_stats(bnames, false)
 }

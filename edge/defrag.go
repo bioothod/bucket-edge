@@ -155,11 +155,11 @@ func (e *EdgeCtl) StartDefrag() error {
 	return nil
 }
 
-func (e *EdgeCtl) ScanHosts() error {
+func (e *EdgeCtl) ScanDefragHosts() error {
 	for ra, hs := range e.Hosts {
 		for status := range e.Session.BackendsStatus(ra.DnetAddr()) {
 			if status.Error != nil {
-				log.Printf("scan-hosts: host: %s: backend status error: %v\n", ra.String(), status.Error)
+				log.Printf("scan-defrag-hosts: host: %s: backend status error: %v\n", ra.String(), status.Error)
 				break
 			}
 
@@ -173,6 +173,8 @@ func (e *EdgeCtl) ScanHosts() error {
 			e.Mutex.Lock()
 			hs.DefragSlots = defrag_slots
 			e.Mutex.Unlock()
+
+			log.Printf("scan-defrag-hosts: host: %s: backends being defragmented: %d\n", ra.String(), defrag_slots)
 		}
 	}
 
