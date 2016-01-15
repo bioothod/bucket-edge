@@ -72,6 +72,8 @@ func main() {
 		e.InsertBucket(b)
 	}
 
+	e.ScanHosts()
+
 	if err = scanner.Err(); err != nil {
 		log.Fatalf("Error reading file '%s': %v\n", *bfile, err)
 	}

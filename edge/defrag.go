@@ -55,7 +55,7 @@ func (e *EdgeCtl) SelectBucketForDefrag() (*Bstat, *elliptics.AddressBackend) {
 					continue
 				}
 
-				if hs.DefragSlots == e.DefragCount {
+				if hs.DefragSlots >= e.DefragCount {
 					continue
 				}
 
@@ -114,24 +114,33 @@ func (e *EdgeCtl) StartDefrag() error {
 	for {
 		for status := range s.BackendsStatus(ab.Addr.DnetAddr()) {
 			if status.Error != nil {
-				log.Printf("defrag: bucket: %s, %s: backend status error: %v\n", bs.Bucket.Name, ab.String(), err)
+				log.Printf("defrag: bucket: %s, %s: backend status error: %v\n", bs.Bucket.Name, ab.Addr.String(), err)
 				return nil
 			}
 
+			defrag_state := elliptics.DefragStateNotStarted
 			defrag_slots := 0
 			for _, backend := range status.Backends {
+				// if backend is not enabled, skip it
+				if backend.State != elliptics.BackendStateEnabled {
+					continue
+				}
+
 				if backend.Backend == ab.Backend {
-					finished = true
-					if backend.State != elliptics.BackendStateEnabled {
-						continue
+					if backend.DefragState != elliptics.DefragStateInProgress {
+						finished = true
 					}
 
-					if backend.DefragState == elliptics.DefragStateInProgress {
-						defrag_slots += 1
-						finished = false
-					}
+					defrag_state = backend.DefragState
+				}
+
+				if backend.DefragState == elliptics.DefragStateInProgress {
+					defrag_slots += 1
 				}
 			}
+
+			log.Printf("defrag: bucket: %s, %s: backends being defragmented: %d, defrag state: %s\n",
+				bs.Bucket.Name, ab.String(), defrag_slots, elliptics.DefragStateString[defrag_state])
 
 			e.SetDefragSlots(ab, defrag_slots)
 		}
@@ -141,6 +150,30 @@ func (e *EdgeCtl) StartDefrag() error {
 		}
 
 		time.Sleep(10 * time.Second)
+	}
+
+	return nil
+}
+
+func (e *EdgeCtl) ScanHosts() error {
+	for ra, hs := range e.Hosts {
+		for status := range e.Session.BackendsStatus(ra.DnetAddr()) {
+			if status.Error != nil {
+				log.Printf("scan-hosts: host: %s: backend status error: %v\n", ra.String(), status.Error)
+				break
+			}
+
+			defrag_slots := 0
+			for _, backend := range status.Backends {
+				if backend.DefragState == elliptics.DefragStateInProgress {
+					defrag_slots += 1
+				}
+			}
+
+			e.Mutex.Lock()
+			hs.DefragSlots = defrag_slots
+			e.Mutex.Unlock()
+		}
 	}
 
 	return nil
