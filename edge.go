@@ -99,6 +99,7 @@ func main() {
 		go func() {
 			defer wait.Done()
 
+			var err error
 			for {
 				err = e.Run()
 				if err != nil {
@@ -108,7 +109,7 @@ func main() {
 				time.Sleep(time.Second)
 			}
 
-			log.Printf("defrag/recovery worker completed\n")
+			log.Printf("defrag/recovery worker completed, error: %v\n", err)
 		}()
 	}
 
