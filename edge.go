@@ -80,7 +80,7 @@ func main() {
 
 	go func() {
 		for !need_exit {
-			for i := 0; i < 30; i++ {
+			for i := 0; i < 600; i++ {
 				if need_exit {
 					return
 				}
