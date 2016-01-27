@@ -7,6 +7,7 @@ import (
 	"log"
 	"time"
 	"os"
+	"runtime"
 	"sync"
 )
 
@@ -18,6 +19,8 @@ const (
 )
 
 func main() {
+	runtime.GOMAXPROCS(runtime.NumCPU())
+
 	bfile := flag.String("buckets", "", "File with bucket names to defrag and recover, one name per line")
 	config_file := flag.String("config", "", "Transport config file")
 	defrag_count := flag.Int("defrag-count", DefragBackendsPerServerDefault,
