@@ -316,6 +316,8 @@ type destination struct {
 	failed		[]elliptics.DnetIteratorResponse
 
 	really_failed	[]elliptics.DnetIteratorResponse
+
+	err		error
 }
 
 func NewDestination (groups []uint32) (*destination, error) {
@@ -638,7 +640,9 @@ func (ctl *IteratorCtl) StartRecovery() (err error) {
 				atomic.AddUint64(&ctl.bad, bad)
 
 				if err != nil {
-					log.Fatalf("start-recovery: bucket: %s, could not read server-send results: %v\n", ctl.gi.bucket.Name, err)
+					log.Printf("start-recovery: bucket: %s, could not read server-send results: %v\n", ctl.gi.bucket.Name, err)
+					dst.err = err
+					return
 				}
 			}(dst)
 		}
@@ -654,6 +658,14 @@ func (ctl *IteratorCtl) StartRecovery() (err error) {
 
 				dst.failed = append(dst.failed, f)
 			}
+		}
+	}
+
+	for _, dst := range dest {
+		if dst.err != nil {
+			log.Printf("start-recovery: bucket: %s, %s, index: %d, dst-groups: %v, destination error: %v\n",
+					ctl.gi.bucket.Name, ctl.ab.String(), ctl.index, dst.groups, dst.err)
+			return dst.err
 		}
 	}
 
