@@ -155,7 +155,7 @@ func (e *EdgeCtl) InsertBucket(b *bucket.Bucket, insert_new bool) {
 		e.Buckets[b.Name] = bs
 	}
 
-	log.Printf("bucket: %s, need-defrag: %d, need-recovery: %v\n", b.Name, bs.NeedDefrag, bs.NeedRecovery)
+	log.Printf("insert-bucket: bucket: %s, need-defrag: %d, need-recovery: %v\n", b.Name, bs.NeedDefrag, bs.NeedRecovery)
 	return
 }
 

@@ -1,6 +1,7 @@
 package edge
 
 import (
+	"fmt"
 	"github.com/bioothod/backrunner/bucket"
 	"github.com/bioothod/elliptics-go/elliptics"
 	"log"
@@ -27,6 +28,17 @@ func (e *EdgeCtl) SelectBucketForDefrag() (*Bstat, *elliptics.AddressBackend) {
 	for bname, bs := range e.Buckets {
 		for _, sg := range bs.Bucket.Group {
 			for ab, st := range sg.Ab {
+				hs, ok := e.Hosts[ab.Addr]
+				if !ok {
+					log.Printf("defrag: bucket: %s, %s: there is no address in @Hosts map\n",
+						bs.Bucket.Name, ab.String())
+					continue
+				}
+
+				if hs.DefragSlots >= e.DefragCount {
+					continue
+				}
+
 				// there is no statistics for this group, skip it
 				if st.VFS.TotalSizeLimit == 0 {
 					log.Printf("defrag: bucket: %s, %s: no statistics for this backend\n",
@@ -48,19 +60,11 @@ func (e *EdgeCtl) SelectBucketForDefrag() (*Bstat, *elliptics.AddressBackend) {
 					continue
 				}
 
-				hs, ok := e.Hosts[ab.Addr]
-				if !ok {
-					log.Printf("defrag: bucket: %s, %s: there is no address in @Hosts map\n",
-						bs.Bucket.Name, ab.String())
-					continue
-				}
-
-				if hs.DefragSlots >= e.DefragCount {
-					continue
-				}
-
 				hs.DefragSlots++
 				delete(e.Buckets, bname)
+
+				fmt.Printf("%s: bucket: %s, %s, need-defrag: %d, need-recovery: %v, selected bucket for defrag\n",
+					time.Now().String(), bs.Bucket.Name, ab.String(), bs.NeedDefrag, bs.NeedRecovery)
 				return bs, &ab
 			}
 		}
@@ -78,8 +82,10 @@ func (e *EdgeCtl) PutBucketBackFromDefrag(bs *Bstat) {
 
 	if bs.NeedRecovery || bs.NeedDefrag > 0 {
 		e.Buckets[bs.Bucket.Name] = bs
-		return
 	}
+
+	fmt.Printf("%s: bucket: %s, need-defrag: %d, need-recovery: %v, defrag completed, buckets left: %d\n",
+		time.Now().String(), bs.Bucket.Name, bs.NeedDefrag, bs.NeedRecovery, len(e.Buckets))
 }
 
 func (e *EdgeCtl) SetDefragSlots(ab *elliptics.AddressBackend, slots int) {
@@ -139,8 +145,9 @@ func (e *EdgeCtl) StartDefrag() error {
 				}
 			}
 
-			log.Printf("defrag: bucket: %s, %s: backends being defragmented: %d, defrag state: %s\n",
-				bs.Bucket.Name, ab.String(), defrag_slots, elliptics.DefragStateString[defrag_state])
+			log.Printf("start-defrag: bucket: %s, %s: backends being defragmented: %d, defrag state: %s, " +
+				"waiting for completion, finished state: %v\n",
+				bs.Bucket.Name, ab.String(), defrag_slots, elliptics.DefragStateString[defrag_state], finished)
 
 			e.SetDefragSlots(ab, defrag_slots)
 		}
@@ -149,7 +156,7 @@ func (e *EdgeCtl) StartDefrag() error {
 			break
 		}
 
-		time.Sleep(10 * time.Second)
+		time.Sleep(30 * time.Second)
 	}
 
 	return nil

@@ -1151,7 +1151,8 @@ func (e *EdgeCtl) BucketRecovery(b *bucket.Bucket) (error) {
 	}
 
 	if len(gis) <= 1 {
-		err = fmt.Errorf("bucket-recovery: bucket: %s: required at least 2 group iterators, but we have %d, exiting\n", b.Name, len(gis))
+		err = fmt.Errorf("bucket-recovery: bucket: %s: required at least 2 group iterators, but we have %d, exiting\n",
+			b.Name, len(gis))
 		log.Printf("%v\n", err)
 		return err
 	}
@@ -1187,6 +1188,8 @@ func (e *EdgeCtl) SelectBucketForRecovery() (*Bstat) {
 	for bname, bs := range e.Buckets {
 		if bs.NeedRecovery {
 			delete(e.Buckets, bname)
+			fmt.Printf("%s: bucket: %s, need-defrag: %d, need-recovery: %v, selected bucket for recovery\n",
+				time.Now().String(), bs.Bucket.Name, bs.NeedDefrag, bs.NeedRecovery)
 			return bs
 		}
 	}
@@ -1203,8 +1206,10 @@ func (e *EdgeCtl) PutBucketBackFromRecovery(bs *Bstat, need_recovery bool) {
 
 	if bs.NeedDefrag > 0 {
 		e.Buckets[bs.Bucket.Name] = bs
-		return
 	}
+
+	fmt.Printf("%s: bucket: %s, need-defrag: %d, need-recovery: %v, recovery completed, buckets left: %d\n",
+		time.Now().String(), bs.Bucket.Name, bs.NeedDefrag, bs.NeedRecovery, len(e.Buckets))
 }
 
 func (e *EdgeCtl) LoadRecoveryState(bs *Bstat, state *BucketRecoveryState) error {
