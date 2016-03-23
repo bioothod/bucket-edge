@@ -29,6 +29,7 @@ func main() {
 		"Defragmentation will only start if backend's free rate is less than this value")
 	defrag_removed_rate := flag.Float64("defrag-removed-rate", DefragRemovedRateDefault,
 		"Defragmentation will only start if backend's removed rate is more than this value")
+	skip := flag.String("skip", "", "Skip 'defrag' or 'recovery'")
 	tm := flag.Int("timeback", 60 * 60 * 24 * 7,
 		"The gap in seconds back from current time. If backend defragmentation or recovery was completed within this gap, do not run it again")
 	workers := flag.Int("workers", NumWorkersDefault, "Maximum number of defrag/recovery workers per cluster")
@@ -54,6 +55,7 @@ func main() {
 	e.DefragFreeRate = *defrag_free_rate
 	e.DefragRemovedRate = *defrag_removed_rate
 	e.TmpPath = *tmp_path
+	e.Skip = *skip
 
 	r, err := os.Open(*bfile)
 	if err != nil {
@@ -92,6 +94,7 @@ func main() {
 			}
 
 			e.UpdateStats()
+			runtime.GC()
 		}
 	}()
 

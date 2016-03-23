@@ -26,6 +26,8 @@ type EdgeCtl struct {
 	Timeback		time.Time
 
 	TmpPath			string
+
+	Skip			string
 }
 
 func EdgeInit(config_file string) (e *EdgeCtl) {
@@ -143,6 +145,13 @@ func (e *EdgeCtl) InsertBucket(b *bucket.Bucket, insert_new bool) {
 		}
 	}
 
+	if e.Skip == "defrag" {
+		bs.NeedDefrag = 0
+	}
+	if e.Skip == "recovery" {
+		bs.NeedRecovery = false
+	}
+
 	old_bs, ok := e.Buckets[b.Name]
 	if ok {
 		*old_bs = *bs
@@ -159,12 +168,12 @@ func (e *EdgeCtl) InsertBucket(b *bucket.Bucket, insert_new bool) {
 	return
 }
 
-func (e *EdgeCtl) Run() error {
+func (e *EdgeCtl) Run() (err error) {
 	if len(e.Buckets) == 0 {
 		return fmt.Errorf("there are no buckets to run defrag/recovery")
 	}
 
-	err := e.StartDefrag()
+	err = e.StartDefrag()
 	if err != nil {
 		return err
 	}
