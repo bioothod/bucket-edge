@@ -169,6 +169,7 @@ func (ctl *IteratorCtl) WriteChunk(ch []*elliptics.DnetIteratorResponse) error {
 			ctl.gi.bucket.Name, ctl.ab.String(), tmp_path, err)
 		return err
 	}
+	defer out.Close()
 
 	enc := gob.NewEncoder(out)
 	for _, resp := range ch {
