@@ -118,7 +118,8 @@ func (e *EdgeCtl) StartDefrag() error {
 
 	finished := false
 	for {
-		for status := range s.BackendsStatus(ab.Addr.DnetAddr()) {
+		for t := range s.BackendsStatus(ab.Addr.DnetAddr()).Out {
+			status := t.(*elliptics.DnetBackendsStatus)
 			if status.Error != nil {
 				log.Printf("defrag: bucket: %s, %s: backend status error: %v\n", bs.Bucket.Name, ab.Addr.String(), err)
 				return nil
@@ -164,7 +165,9 @@ func (e *EdgeCtl) StartDefrag() error {
 
 func (e *EdgeCtl) ScanDefragHosts() error {
 	for ra, hs := range e.Hosts {
-		for status := range e.Session.BackendsStatus(ra.DnetAddr()) {
+		for t := range e.Session.BackendsStatus(ra.DnetAddr()).Out {
+			status := t.(*elliptics.DnetBackendsStatus)
+
 			if status.Error != nil {
 				log.Printf("scan-defrag-hosts: host: %s: backend status error: %v\n", ra.String(), status.Error)
 				break

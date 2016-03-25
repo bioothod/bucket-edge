@@ -114,7 +114,7 @@ type IteratorCtl struct {
 
 	gi		*GroupIteratorCtl
 
-	in		<-chan elliptics.IteratorResult
+	in		*elliptics.DChannel
 	tmp_dir		string
 	err		error
 
@@ -201,7 +201,9 @@ func (ctl *IteratorCtl) ReadIteratorResponse() error {
 	idx := 0
 	chunk := make([]*elliptics.DnetIteratorResponse, max_idx, max_idx)
 
-	for ir := range ctl.in {
+	for irt := range ctl.in.Out {
+		ir := irt.(elliptics.IteratorResult)
+
 		ctl.iter_id = ir.ID()
 
 		if ir.Error() != nil {
@@ -311,7 +313,7 @@ func same_groups(gg1, gg2 []uint32) bool {
 type destination struct {
 	keys		[]elliptics.DnetRawID
 	groups		[]uint32
-	ssend		<-chan elliptics.IteratorResult
+	ssend		*elliptics.DChannel
 
 	failed		[]elliptics.DnetIteratorResponse
 
@@ -336,7 +338,8 @@ func (d *destination) SameGroups(groups []uint32) bool {
 }
 
 func (d *destination) ReadServerSendResults() (good, bad uint64, err error) {
-	for ir := range d.ssend {
+	for irt := range d.ssend.Out {
+		ir := irt.(elliptics.IteratorResult)
 		err = ir.Error()
 
 		if err != nil {
