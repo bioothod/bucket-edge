@@ -45,6 +45,7 @@ type ChunkReader struct {
 	last		*elliptics.DnetIteratorResponse
 	last_valid	bool
 	decoder		*gob.Decoder
+	input		*os.File
 }
 
 func NewChunkReader(path string) (*ChunkReader, error) {
@@ -59,6 +60,7 @@ func NewChunkReader(path string) (*ChunkReader, error) {
 		last:		nil,
 		last_valid:	false,
 		decoder:	dec,
+		input:		in,
 	}, nil
 }
 
@@ -256,6 +258,8 @@ func (ctl *IteratorCtl) PopResponseIterator() (min *elliptics.DnetIteratorRespon
 					ctl.gi.bucket.Name, ctl.ab.String(), k)
 			}
 
+			// close file descriptor
+			dec.input.Close()
 			delete(ctl.readers, k)
 			continue
 		}
