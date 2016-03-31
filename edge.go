@@ -6,6 +6,8 @@ import (
 	"github.com/bioothod/bucket-edge/edge"
 	"log"
 	"time"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"runtime"
 	"sync"
@@ -34,6 +36,7 @@ func main() {
 		"The gap in seconds back from current time. If backend defragmentation or recovery was completed within this gap, do not run it again")
 	workers := flag.Int("workers", NumWorkersDefault, "Maximum number of defrag/recovery workers per cluster")
 	tmp_path := flag.String("tmp-path", "", "Path where all temporal objects will be stored")
+	profile_url := flag.String("profile-url", "", "Go pprof http server URL: for example \"localhost:6060\"")
 	flag.Parse()
 
 	if *bfile == "" {
@@ -46,6 +49,12 @@ func main() {
 
 	if *tmp_path == "" {
 		log.Fatalf("You must specify temporal path")
+	}
+
+	if *profile_url != "" {
+		go func() {
+			log.Println(http.ListenAndServe(*profile_url, nil))
+		}()
 	}
 
 	e := edge.EdgeInit(*config_file)
