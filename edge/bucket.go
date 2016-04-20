@@ -24,6 +24,7 @@ type EdgeCtl struct {
 	DefragRemovedRate	float64
 	DefragCount		int
 	Timeback		time.Time
+	WriteTimeout		int
 
 	TmpPath			string
 

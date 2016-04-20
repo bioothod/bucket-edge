@@ -719,6 +719,7 @@ func (e *EdgeCtl) DataSession(groups []uint32) (s *elliptics.Session, err error)
 	}
 
 	s.SetGroups(groups)
+	s.SetTimeout(e.WriteTimeout)
 
 	return s, nil
 }
